@@ -148,14 +148,59 @@ export type ObjectFields = {
   requiredFields: RequiredFieldMap;
   fieldValues: RequiredFieldMap;
   changedValues: RequiredFieldMap;
+  /** The object each lookup field points to, per object. Only lookups to a single object are listed. */
+  lookups: Record<string, Record<string, string>>;
 };
 
-/** Describes each object once. Objects that can't be described are left out. */
-export async function loadObjectFields(objects: string[], describe: DescribeObject): Promise<ObjectFields> {
-  const requiredFields: RequiredFieldMap = {};
-  const fieldValues: RequiredFieldMap = {};
-  const changedValues: RequiredFieldMap = {};
+export const emptyObjectFields = (): ObjectFields => ({
+  requiredFields: {},
+  fieldValues: {},
+  changedValues: {},
+  lookups: {},
+});
+
+/** Lookup targets a test points at an existing record instead of inserting one. */
+export const EXISTING_RECORD_IDS: Record<string, string> = {
+  User: 'UserInfo.getUserId()',
+  Pricebook2: 'Test.getStandardPricebookId()',
+};
+
+/** Setup objects a test can't simply insert (or would hit mixed DML with); their lookups stay TODOs. */
+const NOT_INSERTABLE = new Set([
+  'BusinessHours',
+  'Group',
+  'Organization',
+  'PermissionSet',
+  'Profile',
+  'RecordType',
+  'UserRole',
+]);
+
+/** Whether a generated test can insert a record of `object` to fill a lookup to it. */
+export const canInsertParent = (object: string): boolean =>
+  !NOT_INSERTABLE.has(object) && !(object in EXISTING_RECORD_IDS);
+
+/** Createable lookups to exactly one object (polymorphic lookups like `WhatId` are left out). */
+export function lookupTargets(fields: DescribeField[]): Record<string, string> {
+  const targets: Record<string, string> = {};
+  for (const field of fields) {
+    if (field.type !== 'reference' || !field.createable || field.calculated) continue;
+    if (field.referenceTo?.length === 1) targets[field.name] = field.referenceTo[0];
+  }
+  return targets;
+}
+
+/**
+ * Describes each object once, adding to `into` when given. Objects already in `into`, and
+ * objects that can't be described, are skipped.
+ */
+export async function loadObjectFields(
+  objects: string[],
+  describe: DescribeObject,
+  into: ObjectFields = emptyObjectFields(),
+): Promise<ObjectFields> {
   for (const object of [...new Set(objects)]) {
+    if (object in into.requiredFields) continue;
     let fields: DescribeField[] | undefined;
     try {
       fields = await describe(object);
@@ -163,10 +208,11 @@ export async function loadObjectFields(objects: string[], describe: DescribeObje
       fields = undefined;
     }
     if (fields) {
-      requiredFields[object] = requiredFieldValues(fields);
-      fieldValues[object] = settableFieldValues(fields);
-      changedValues[object] = changedFieldValues(fields);
+      into.requiredFields[object] = requiredFieldValues(fields);
+      into.fieldValues[object] = settableFieldValues(fields);
+      into.changedValues[object] = changedFieldValues(fields);
+      into.lookups[object] = lookupTargets(fields);
     }
   }
-  return { requiredFields, fieldValues, changedValues };
+  return into;
 }
