@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.3.0...v0.4.0) (2026-11-20)
+
+
+### Features
+
+* list the Flow elements no test runs ([#14](https://github.com/mcarvin8/sf-flow-coverage/issues/14)) ([83fc31e](https://github.com/mcarvin8/sf-flow-coverage/commit/83fc31e48735ed4caebc60d992259adc0bd34eaf))
+* point Process Builder processes toward migration ([#17](https://github.com/mcarvin8/sf-flow-coverage/issues/17)) ([7fab878](https://github.com/mcarvin8/sf-flow-coverage/commit/7fab8789d040de2bcb2aa2db23cee2d4390e5ee9))
+* **readiness:** report the deploy-as-active setting ([#19](https://github.com/mcarvin8/sf-flow-coverage/issues/19)) ([998079e](https://github.com/mcarvin8/sf-flow-coverage/commit/998079e8cec269c50990804c64d8c1efef5facfd))
+* **scaffold:** one condition engine for criteria, parents, and assertions ([#20](https://github.com/mcarvin8/sf-flow-coverage/issues/20)) ([20aa739](https://github.com/mcarvin8/sf-flow-coverage/commit/20aa739984ae13346a107e1c05b0c1c0cddc3ee7))
+* **transform:** write Flow coverage as SonarQube, Cobertura, and lcov ([#16](https://github.com/mcarvin8/sf-flow-coverage/issues/16)) ([a7537fa](https://github.com/mcarvin8/sf-flow-coverage/commit/a7537fa979068a8079b42c57d665ed12f0c06eda))
+* warn when the org has no Flow coverage at all ([#18](https://github.com/mcarvin8/sf-flow-coverage/issues/18)) ([ae438cc](https://github.com/mcarvin8/sf-flow-coverage/commit/ae438cce382bd1200505c06e21adc4dfcc4f94ae))
+
 ## [0.3.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.2.0...v0.3.0) (2026-11-20)
 
 
