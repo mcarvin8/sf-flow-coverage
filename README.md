@@ -248,6 +248,10 @@ DESCRIPTION
   `--code-coverage`, Salesforce records no Flow coverage. When no Flow in the org has any coverage recorded, the command
   warns that the tests most likely ran without `--code-coverage`.
 
+  The report also says whether "Deploy processes and flows as active" is already on, and what that means: turn it on
+  once the org is ready, or keep coverage up so deployments of active Flows keep working. The setting only affects
+  production; in a sandbox or scratch org the report says so.
+
 EXAMPLES
   Report readiness for the default org:
 
