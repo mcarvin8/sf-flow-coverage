@@ -49,6 +49,8 @@ function skipReason(metadata: FlowMetadata | undefined): string | undefined {
 /**
  * Requires coverage for each changed Flow, not just the org-wide total Salesforce checks.
  * Coverage is read from the org, so run this after deploying the branch and running Apex tests.
+ * Fails a Flow whose org versions suggest the branch was deployed inactive, since the coverage
+ * read would then belong to an older version (or to none).
  */
 export async function evaluateGate(options: GateOptions): Promise<GateResult> {
   const minElementCoverage = options.minElementCoverage ?? 0;
@@ -97,6 +99,18 @@ export async function evaluateGate(options: GateOptions): Promise<GateResult> {
         ...details,
         status: 'skip',
         reason: `Process type ${flow.processType} does not count toward deploy-as-active coverage.`,
+      });
+    } else if (flow.versionState === 'noActiveVersion') {
+      results.push({
+        ...details,
+        status: 'fail',
+        reason: `No version of this Flow is active in the org (latest is version ${flow.versionNumber ?? '?'}, ${flow.status ?? 'inactive'}). Deploy it as active or activate it, run Apex tests, then rerun the gate.`,
+      });
+    } else if (flow.versionState === 'newerInactiveVersion') {
+      results.push({
+        ...details,
+        status: 'fail',
+        reason: `The org's active version ${flow.versionNumber ?? '?'} is older than its latest version ${flow.latestVersionNumber ?? '?'}, which is inactive, so coverage may be stale. Activate the latest version, run Apex tests, then rerun the gate.`,
       });
     } else if (!flow.covered) {
       results.push({

@@ -8,6 +8,8 @@ Salesforce only checks that the org-wide total stays at or above 75%, so a singl
 
 Coverage is read from FlowTestCoverage in the target org. Deploy the branch to the target org and run Apex tests there with `sf apex run test --code-coverage` before running the gate. Without `--code-coverage`, Salesforce records no Flow coverage. Flows that don't count toward deploy-as-active (screen Flows, inactive Flows) are skipped.
 
+The gate also fails a Flow when the org has no active version of it, or when its active version is older than its latest version. Both usually mean the branch was deployed inactive, so the org's coverage doesn't belong to the version in the pull request.
+
 Exits with code 1 when any Flow fails.
 
 # examples

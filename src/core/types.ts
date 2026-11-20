@@ -19,7 +19,18 @@ export type FlowCoverage = {
   /** Elements covered across all tests, 0-100. */
   elementCoveragePercent: number;
   tests: FlowTestRef[];
+  /**
+   * How this version relates to the Flow's other versions, when known (set by `getFlowCoverage`):
+   * - `current`: it is the active version and the latest one.
+   * - `noActiveVersion`: no version is active; this is the latest, inactive version.
+   * - `newerInactiveVersion`: it is active, but a newer inactive version exists.
+   */
+  versionState?: FlowVersionState;
+  /** Version number of the Flow's latest version, when it differs from `versionNumber`. */
+  latestVersionNumber?: number;
 };
+
+export type FlowVersionState = 'current' | 'noActiveVersion' | 'newerInactiveVersion';
 
 /**
  * Where Flow coverage comes from. Today the only implementation reads FlowTestCoverage
@@ -29,7 +40,10 @@ export type FlowCoverage = {
 export type CoverageSource = {
   /** Every active Flow version that counts toward the deploy-as-active coverage requirement. */
   listActiveCountedFlows(): Promise<FlowCoverage[]>;
-  /** Coverage for the named Flows (active version, else latest). Names missing from the org are omitted. */
+  /**
+   * Coverage for the named Flows (active version, else latest), with `versionState` set.
+   * Names missing from the org are omitted.
+   */
   getFlowCoverage(flowNames: string[]): Promise<FlowCoverage[]>;
 };
 
