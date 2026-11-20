@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.4.0...v0.4.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **scaffold:** never assign fields a test can't write ([#21](https://github.com/mcarvin8/sf-flow-coverage/issues/21)) ([1cb7087](https://github.com/mcarvin8/sf-flow-coverage/commit/1cb70876381e0f513856b12b0085489468a1dbf2))
+
 ## [0.4.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.3.0...v0.4.0) (2026-11-20)
 
 
