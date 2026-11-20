@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Opportunity Create</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <filters>
+            <field>CloseDate</field>
+            <operator>EqualTo</operator>
+            <value>
+                <dateValue>2026-12-31</dateValue>
+            </value>
+        </filters>
+        <filters>
+            <field>Probability</field>
+            <operator>EqualTo</operator>
+            <value>
+                <numberValue>50</numberValue>
+            </value>
+        </filters>
+        <filters>
+            <field>OwnerId</field>
+            <operator>EqualTo</operator>
+            <value>
+                <elementReference>$User.Id</elementReference>
+            </value>
+        </filters>
+        <filters>
+            <field>Description</field>
+            <operator>IsNull</operator>
+        </filters>
+        <object>Opportunity</object>
+        <recordTriggerType>Create</recordTriggerType>
+        <triggerType>RecordAfterSave</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>

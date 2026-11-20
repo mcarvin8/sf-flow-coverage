@@ -1,0 +1,39 @@
+# summary
+
+Report how close the org is to the coverage needed to deploy Flows as active.
+
+# description
+
+Salesforce requires 75% of active autolaunched Flows and processes to be run by at least one Apex test before you can turn on "Deploy processes and flows as active". This command reads FlowTestCoverage from the target org, reports the org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and the Apex tests that already run each covered Flow.
+
+FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first (for example, `sf apex run test --test-level RunLocalTests --wait 60`) so the report is current.
+
+# examples
+
+- Report readiness for the default org:
+
+  <%= config.bin %> <%= command.id %>
+
+- Rank uncovered Flows by changes in the last 6 months:
+
+  <%= config.bin %> <%= command.id %> --target-org prod --since "6 months ago"
+
+- Fail a CI job unless the org is at or above 75%:
+
+  <%= config.bin %> <%= command.id %> --target-org prod --fail-if-not-ready
+
+# flags.project-dir.summary
+
+Git repository used to rank uncovered Flows by how often they change.
+
+# flags.since.summary
+
+Only count commits after this date (any value `git log --since` accepts).
+
+# flags.threshold.summary
+
+Coverage percentage the org must reach.
+
+# flags.fail-if-not-ready.summary
+
+Exit with code 1 when the org is below the threshold.

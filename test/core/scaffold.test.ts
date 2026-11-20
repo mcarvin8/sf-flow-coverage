@@ -1,0 +1,148 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { findFlowFiles, readProjectConfig } from '../../src/core/projectFiles.js';
+import { DEFAULT_APEX_API_VERSION, scaffoldTests } from '../../src/core/scaffold.js';
+import { FIXTURE_FLOWS, FIXTURE_PROJECT } from '../helpers.js';
+
+describe('scaffoldTests', () => {
+  let out: string;
+
+  beforeEach(() => {
+    out = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-out-'));
+  });
+
+  afterEach(() => rmSync(out, { recursive: true, force: true }));
+
+  it('writes a class and meta file per counted Flow and skips the rest', async () => {
+    const result = await scaffoldTests({
+      flowNames: ['Account_After_Save', 'Account_After_Save', 'Intake_Screen', 'Broken', 'Missing'],
+      projectDir: FIXTURE_PROJECT,
+      outputDir: out,
+    });
+
+    expect(result.created).toEqual([
+      {
+        flowName: 'Account_After_Save',
+        className: 'Account_After_Save_FlowTest',
+        path: join(out, 'Account_After_Save_FlowTest.cls'),
+      },
+    ]);
+    expect(result.skipped.map((s) => s.flowName)).toEqual(['Intake_Screen', 'Broken', 'Missing']);
+    expect(result.skipped[0].reason).toContain('Process type Flow');
+    expect(result.skipped[1].reason).toContain('not a Flow metadata file');
+    expect(result.skipped[2].reason).toContain('No Missing.flow-meta.xml found');
+    expect(readFileSync(join(out, 'Account_After_Save_FlowTest.cls'), 'utf8')).toContain('@IsTest');
+    expect(readFileSync(join(out, 'Account_After_Save_FlowTest.cls-meta.xml'), 'utf8')).toContain(
+      '<apiVersion>64.0</apiVersion>',
+    );
+  });
+
+  it('describes the objects each test creates', async () => {
+    const described: string[] = [];
+    const result = await scaffoldTests({
+      flowNames: ['Invoice_Before_Delete', 'Calculate_Discount', 'Order_Event_Handler', 'Weekly_Digest'],
+      projectDir: FIXTURE_PROJECT,
+      outputDir: out,
+      describe: async (name) => {
+        described.push(name);
+        return [{ name: 'Amount__c', type: 'currency', nillable: false, createable: true, defaultedOnCreate: false }];
+      },
+    });
+    expect(result.created).toHaveLength(4);
+    expect(described).toEqual(['Invoice__c', 'Account', 'Widget__c', 'Order_Event__e']);
+    const invoice = readFileSync(join(out, 'Invoice_Before_Delete_FlowTest.cls'), 'utf8');
+    expect(invoice).toContain('Amount__c = 1');
+    expect(invoice).not.toContain('TODO: set the required fields');
+  });
+
+  it('does not overwrite existing classes unless forced', async () => {
+    const classPath = join(out, 'Contact_Process_FlowTest.cls');
+    writeFileSync(classPath, 'existing');
+    const skipped = await scaffoldTests({
+      flowNames: ['Contact_Process'],
+      projectDir: FIXTURE_PROJECT,
+      outputDir: out,
+    });
+    expect(skipped.skipped[0].reason).toContain('already exists');
+    expect(readFileSync(classPath, 'utf8')).toBe('existing');
+
+    const forced = await scaffoldTests({
+      flowNames: ['Contact_Process'],
+      projectDir: FIXTURE_PROJECT,
+      outputDir: out,
+      force: true,
+    });
+    expect(forced.created).toHaveLength(1);
+    expect(readFileSync(classPath, 'utf8')).toContain('@IsTest');
+  });
+
+  it('writes nothing on a dry run', async () => {
+    const result = await scaffoldTests({
+      flowNames: ['Case_Update'],
+      projectDir: FIXTURE_PROJECT,
+      outputDir: join(out, 'nested'),
+      dryRun: true,
+    });
+    expect(result.created).toHaveLength(1);
+    expect(existsSync(join(out, 'nested'))).toBe(false);
+  });
+
+  it('defaults to the default package classes folder and API version', async () => {
+    writeFileSync(join(out, 'Solo.flow-meta.xml'), readFileSync(join(FIXTURE_FLOWS, 'Weekly_Digest.flow-meta.xml')));
+    const result = await scaffoldTests({ flowNames: ['Solo'], projectDir: out });
+    const expected = join(out, 'force-app', 'main', 'default', 'classes', 'Solo_FlowTest.cls');
+    expect(result.created[0].path).toBe(expected);
+    expect(readFileSync(`${expected}-meta.xml`, 'utf8')).toContain(
+      `<apiVersion>${DEFAULT_APEX_API_VERSION}</apiVersion>`,
+    );
+  });
+});
+
+describe('projectFiles', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-proj-'));
+  });
+
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('finds Flow files and ignores tool folders', async () => {
+    const flows = await findFlowFiles(FIXTURE_PROJECT);
+    expect(flows.get('Account_After_Save')).toBe(join(FIXTURE_FLOWS, 'Account_After_Save.flow-meta.xml'));
+    expect(flows.size).toBe(12);
+
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(dir, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(dir, 'node_modules', 'pkg', 'Hidden.flow-meta.xml'), '');
+    writeFileSync(join(dir, 'Visible.flow'), '');
+    expect([...(await findFlowFiles(dir)).keys()]).toEqual(['Visible']);
+  });
+
+  it('reads sfdx-project.json', async () => {
+    expect(await readProjectConfig(FIXTURE_PROJECT)).toEqual({
+      defaultPackagePath: 'force-app',
+      sourceApiVersion: '64.0',
+    });
+  });
+
+  it('falls back to the first package directory and ignores bad files', async () => {
+    writeFileSync(
+      join(dir, 'sfdx-project.json'),
+      JSON.stringify({ packageDirectories: [{ path: 'src' }], sourceApiVersion: 64 }),
+    );
+    expect(await readProjectConfig(dir)).toEqual({ defaultPackagePath: 'src', sourceApiVersion: undefined });
+
+    writeFileSync(join(dir, 'sfdx-project.json'), '{}');
+    expect(await readProjectConfig(dir)).toEqual({ defaultPackagePath: undefined, sourceApiVersion: undefined });
+
+    writeFileSync(join(dir, 'sfdx-project.json'), 'not json');
+    expect(await readProjectConfig(dir)).toEqual({});
+
+    rmSync(join(dir, 'sfdx-project.json'));
+    expect(await readProjectConfig(dir)).toEqual({});
+  });
+});

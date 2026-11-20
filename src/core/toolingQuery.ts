@@ -1,0 +1,22 @@
+import type { Connection } from '@salesforce/core';
+
+import type { DescribeField, DescribeObject } from './requiredFields.js';
+import type { ToolingQuery } from './types.js';
+
+const MAX_FETCH = 1_000_000;
+
+/** Adapts an org connection to the ToolingQuery used by OrgCoverageSource, fetching every page. */
+export function toolingQuery(connection: Pick<Connection, 'tooling'>): ToolingQuery {
+  return async <T extends Record<string, unknown>>(soql: string): Promise<T[]> => {
+    const result = await connection.tooling.query<T>(soql, { autoFetch: true, maxFetch: MAX_FETCH });
+    return result.records;
+  };
+}
+
+/** Adapts an org connection to the DescribeObject used by scaffolding to fill required fields. */
+export function describeObject(connection: Pick<Connection, 'describe'>): DescribeObject {
+  return async (objectName: string): Promise<DescribeField[]> => {
+    const result = await connection.describe(objectName);
+    return result.fields as unknown as DescribeField[];
+  };
+}

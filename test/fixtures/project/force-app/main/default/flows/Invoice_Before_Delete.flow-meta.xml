@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Invoice Before Delete</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <object>Invoice__c</object>
+        <recordTriggerType>Delete</recordTriggerType>
+        <triggerType>RecordBeforeDelete</triggerType>
+        <filterFormula>{!$Record.Locked__c} = true</filterFormula>
+    </start>
+    <status>Active</status>
+</Flow>

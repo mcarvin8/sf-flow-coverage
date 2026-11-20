@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Weekly Digest</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <triggerType>Scheduled</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>

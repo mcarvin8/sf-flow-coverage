@@ -1,0 +1,196 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { OrgCoverageSource } from '../../src/core/orgCoverageSource.js';
+import type { ToolingQuery } from '../../src/core/types.js';
+
+type Rec = Record<string, unknown>;
+
+const flowRec = (id: string, name: string, extra: Rec = {}): Rec => ({
+  Id: id,
+  VersionNumber: 2,
+  ProcessType: 'AutoLaunchedFlow',
+  Status: 'Active',
+  Definition: { DeveloperName: name, NamespacePrefix: null },
+  ...extra,
+});
+
+/** Routes queries by the object in the FROM clause. */
+function fakeQuery(tables: Record<string, Rec[] | Error>): { query: ToolingQuery; calls: string[] } {
+  const calls: string[] = [];
+  const query = vi.fn(async (soql: string) => {
+    calls.push(soql);
+    const table = /FROM (\w+)/.exec(soql)?.[1] as string;
+    const rows = tables[table] ?? [];
+    if (rows instanceof Error) throw rows;
+    return rows;
+  }) as unknown as ToolingQuery;
+  return { query, calls };
+}
+
+const A = '301000000000001AAA';
+const B = '301000000000002AAA';
+
+describe('OrgCoverageSource.listActiveCountedFlows', () => {
+  it('combines Flow, coverage, element and class data', async () => {
+    const { query, calls } = fakeQuery({
+      Flow: [
+        flowRec(A, 'Covered_Flow'),
+        flowRec(B, 'Bare_Flow', { Definition: { DeveloperName: 'Bare_Flow', NamespacePrefix: 'ns' } }),
+      ],
+      FlowTestCoverage: [
+        {
+          Id: 'C1',
+          FlowVersionId: A,
+          ApexTestClassId: '01p000000000001AAA',
+          TestMethodName: 'one',
+          NumElementsCovered: 2,
+          NumElementsNotCovered: 3,
+        },
+        {
+          Id: 'C2',
+          FlowVersionId: A,
+          ApexTestClassId: '01p000000000002AAA',
+          TestMethodName: 'two',
+          NumElementsCovered: 2,
+          NumElementsNotCovered: 3,
+        },
+      ],
+      FlowElementTestCoverage: [
+        { FlowTestCoverageId: 'C1', ElementName: 'a' },
+        { FlowTestCoverageId: 'C1', ElementName: 'b' },
+        { FlowTestCoverageId: 'C2', ElementName: 'b' },
+        { FlowTestCoverageId: 'C2', ElementName: 'c' },
+      ],
+      ApexClass: [
+        { Id: '01p000000000001AAA', Name: 'FlowTests', NamespacePrefix: null },
+        { Id: '01p000000000002AAA', Name: 'MoreTests', NamespacePrefix: 'ns' },
+      ],
+    });
+
+    const flows = await new OrgCoverageSource(query).listActiveCountedFlows();
+
+    expect(calls[0]).toContain(
+      "WHERE Status = 'Active' AND ProcessType IN ('AutoLaunchedFlow', 'Workflow', 'CustomEvent', 'InvocableProcess')",
+    );
+    expect(flows).toEqual([
+      {
+        flowName: 'Covered_Flow',
+        flowVersionId: A,
+        versionNumber: 2,
+        processType: 'AutoLaunchedFlow',
+        status: 'Active',
+        covered: true,
+        elementsCovered: 3,
+        elementsTotal: 5,
+        elementCoveragePercent: 60,
+        tests: [
+          { className: 'FlowTests', methodName: 'one' },
+          { className: 'ns.MoreTests', methodName: 'two' },
+        ],
+      },
+      {
+        flowName: 'ns__Bare_Flow',
+        flowVersionId: B,
+        versionNumber: 2,
+        processType: 'AutoLaunchedFlow',
+        status: 'Active',
+        covered: false,
+        elementsCovered: 0,
+        elementsTotal: 0,
+        elementCoveragePercent: 0,
+        tests: [],
+      },
+    ]);
+  });
+
+  it('falls back to the best single test when element coverage cannot be queried', async () => {
+    const { query } = fakeQuery({
+      Flow: [flowRec(A, 'F')],
+      FlowTestCoverage: [
+        {
+          Id: 'C1',
+          FlowVersionId: A,
+          ApexTestClassId: null,
+          TestMethodName: null,
+          NumElementsCovered: 3,
+          NumElementsNotCovered: 1,
+        },
+        {
+          Id: 'C2',
+          FlowVersionId: A,
+          ApexTestClassId: '01p000000000009AAA',
+          NumElementsCovered: null,
+          NumElementsNotCovered: null,
+        },
+      ],
+      FlowElementTestCoverage: new Error('sObject type FlowElementTestCoverage is not supported'),
+    });
+    const [flow] = await new OrgCoverageSource(query).listActiveCountedFlows();
+    expect(flow.elementsCovered).toBe(3);
+    expect(flow.elementCoveragePercent).toBe(75);
+    expect(flow.tests).toEqual([
+      { className: 'unknown', methodName: 'unknown' },
+      { className: '01p000000000009AAA', methodName: 'unknown' },
+    ]);
+  });
+
+  it('uses the Flow Id when the definition is missing and skips coverage queries when there are no Flows', async () => {
+    const empty = fakeQuery({});
+    expect(await new OrgCoverageSource(empty.query).listActiveCountedFlows()).toEqual([]);
+    expect(empty.calls).toHaveLength(1);
+
+    const { query } = fakeQuery({ Flow: [flowRec(A, 'x', { Definition: null })] });
+    const [flow] = await new OrgCoverageSource(query).listActiveCountedFlows();
+    expect(flow.flowName).toBe(A);
+  });
+
+  it('chunks long IN lists', async () => {
+    const many = Array.from({ length: 450 }, (_, i) => flowRec(`301${String(i).padStart(12, '0')}AAA`, `F${i}`));
+    const { query, calls } = fakeQuery({ Flow: many });
+    await new OrgCoverageSource(query).listActiveCountedFlows();
+    expect(calls.filter((c) => c.includes('FROM FlowTestCoverage'))).toHaveLength(3);
+  });
+});
+
+describe('OrgCoverageSource.getFlowCoverage', () => {
+  it('reads the active version, or the latest when none is active', async () => {
+    const { query, calls } = fakeQuery({
+      FlowDefinition: [
+        { Id: 'D1', DeveloperName: 'Active_One', NamespacePrefix: null, ActiveVersionId: A, LatestVersionId: B },
+        { Id: 'D2', DeveloperName: 'Inactive_One', NamespacePrefix: null, ActiveVersionId: null, LatestVersionId: B },
+        { Id: 'D3', DeveloperName: 'Active_One', NamespacePrefix: 'other', ActiveVersionId: 'X', LatestVersionId: 'X' },
+        { Id: 'D4', DeveloperName: 'Nothing', NamespacePrefix: null, ActiveVersionId: null, LatestVersionId: null },
+      ],
+      Flow: [flowRec(A, 'Active_One'), flowRec(B, 'Inactive_One', { Status: 'Draft' })],
+    });
+    const flows = await new OrgCoverageSource(query).getFlowCoverage([
+      'Active_One',
+      'Inactive_One',
+      'Nothing',
+      "O'Neil",
+    ]);
+    expect(calls[0]).toContain("DeveloperName IN ('Active_One', 'Inactive_One', 'Nothing', 'O\\'Neil')");
+    expect(calls[1]).toContain(`Id IN ('${A}', '${B}')`);
+    expect(flows.map((f) => f.flowName)).toEqual(['Active_One', 'Inactive_One']);
+  });
+
+  it('matches namespaced names', async () => {
+    const { query, calls } = fakeQuery({
+      FlowDefinition: [{ Id: 'D1', DeveloperName: 'Flow', NamespacePrefix: 'ns', ActiveVersionId: A }],
+      Flow: [flowRec(A, 'Flow', { Definition: { DeveloperName: 'Flow', NamespacePrefix: 'ns' } })],
+    });
+    const flows = await new OrgCoverageSource(query).getFlowCoverage(['ns__Flow']);
+    expect(calls[0]).toContain("DeveloperName IN ('Flow')");
+    expect(flows[0].flowName).toBe('ns__Flow');
+  });
+
+  it('returns nothing without querying for no names, and nothing when no definition matches', async () => {
+    const none = fakeQuery({});
+    expect(await new OrgCoverageSource(none.query).getFlowCoverage([])).toEqual([]);
+    expect(none.calls).toHaveLength(0);
+
+    const missing = fakeQuery({ FlowDefinition: [] });
+    expect(await new OrgCoverageSource(missing.query).getFlowCoverage(['Gone'])).toEqual([]);
+    expect(missing.calls).toHaveLength(1);
+  });
+});

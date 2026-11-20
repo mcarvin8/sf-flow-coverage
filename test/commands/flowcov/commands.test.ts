@@ -1,0 +1,229 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { MockTestOrgData, TestContext } from '@salesforce/core/testSetup';
+import { stubSfCommandUx } from '@salesforce/sf-plugins-core';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import FlowcovGate from '../../../src/commands/flowcov/gate.js';
+import FlowcovReadiness from '../../../src/commands/flowcov/readiness.js';
+import FlowcovScaffold from '../../../src/commands/flowcov/scaffold.js';
+import type { FlowCoverage } from '../../../src/core/types.js';
+import { flowXml, TempGitRepo } from '../../gitRepo.js';
+import { coverage, FIXTURE_PROJECT } from '../../helpers.js';
+
+const orgFlows = vi.hoisted(() => ({ value: [] as FlowCoverage[] }));
+
+vi.mock('../../../src/core/orgCoverageSource.js', () => ({
+  OrgCoverageSource: class {
+    public async listActiveCountedFlows(): Promise<FlowCoverage[]> {
+      return orgFlows.value;
+    }
+    public async getFlowCoverage(names: string[]): Promise<FlowCoverage[]> {
+      return orgFlows.value.filter((f) => names.includes(f.flowName));
+    }
+  },
+}));
+
+describe('flowcov commands', () => {
+  const $$ = new TestContext({ setup: false });
+  const testOrg = new MockTestOrgData();
+  let ux: ReturnType<typeof stubSfCommandUx>;
+  let out: string;
+
+  const logged = (): string =>
+    [...ux.log.getCalls(), ...ux.logSuccess.getCalls(), ...ux.warn.getCalls()].flatMap((c) => c.args).join('\n');
+  const tableRows = (): Array<Record<string, unknown>> =>
+    ux.table
+      .getCalls()
+      .flatMap((c: { args: unknown[] }) => (c.args[0] as { data: Array<Record<string, unknown>> }).data);
+
+  beforeEach(async () => {
+    $$.init();
+    await $$.stubAuths(testOrg);
+    ux = stubSfCommandUx($$.SANDBOX);
+    out = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-cmd-'));
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
+    $$.restore();
+    rmSync(out, { recursive: true, force: true });
+    process.exitCode = undefined;
+  });
+
+  describe('readiness', () => {
+    it('reports an org that is not ready', async () => {
+      orgFlows.value = [coverage('Covered'), coverage('Uncovered', { covered: false })];
+      const result = await FlowcovReadiness.run([
+        '--target-org',
+        testOrg.username,
+        '--project-dir',
+        out,
+        '--fail-if-not-ready',
+      ]);
+      expect(result).toMatchObject({ coveragePercent: 50, ready: false, flowsNeeded: 1 });
+      expect(logged()).toContain('Flow coverage: 50% (1 of 2 active Flows and processes have a test). Threshold: 75%.');
+      expect(logged()).toContain('Not ready: add Apex tests for 1 more Flow(s) to reach 75%.');
+      expect(tableRows()).toEqual([
+        { Flow: 'Uncovered', Type: 'AutoLaunchedFlow', Version: 1 },
+        { Flow: 'Covered', 'Element Coverage': '80%', Tests: 'Covered_Test.runs' },
+      ]);
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('reports a ready org with git change counts', async () => {
+      const repo = new TempGitRepo();
+      try {
+        repo.commit('add', { 'flows/Uncovered.flow-meta.xml': flowXml() });
+        orgFlows.value = [
+          coverage('A'),
+          coverage('B'),
+          coverage('C'),
+          coverage('Uncovered', { covered: false, versionNumber: undefined }),
+        ];
+        const result = await FlowcovReadiness.run(['--target-org', testOrg.username, '--project-dir', repo.dir]);
+        expect(result.ready).toBe(true);
+        expect(logged()).toContain('Ready: the org meets the coverage needed to deploy Flows as active.');
+        expect(tableRows()[0]).toEqual({ Flow: 'Uncovered', Type: 'AutoLaunchedFlow', Version: '', Changes: 1 });
+        expect(process.exitCode).toBeUndefined();
+      } finally {
+        repo.remove();
+      }
+    });
+
+    it('prints no tables for an org without Flows', async () => {
+      orgFlows.value = [];
+      await FlowcovReadiness.run(['--target-org', testOrg.username, '--project-dir', out]);
+      expect(ux.table.called).toBe(false);
+    });
+  });
+
+  describe('gate', () => {
+    let repo: TempGitRepo;
+
+    beforeAll(() => {
+      repo = new TempGitRepo();
+      repo.commit('base', { 'README.md': 'x' });
+      repo.git('checkout', '-q', '-b', 'feature');
+      repo.commit('flows', { 'flows/Good.flow-meta.xml': flowXml(), 'flows/Bad.flow-meta.xml': flowXml() });
+    });
+
+    afterAll(() => repo.remove());
+
+    it('passes named Flows that are covered', async () => {
+      orgFlows.value = [coverage('Good')];
+      const result = await FlowcovGate.run(['--target-org', testOrg.username, '--flow', 'Good']);
+      expect(result.passed).toBe(true);
+      expect(tableRows()).toEqual([
+        { Flow: 'Good', Result: 'PASS', 'Element Coverage': '80%', Reason: 'Covered by 1 test method(s).' },
+      ]);
+      expect(logged()).toContain('Flow coverage gate passed for 1 Flow(s).');
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('fails changed Flows without coverage', async () => {
+      orgFlows.value = [coverage('Good'), coverage('Bad', { covered: false })];
+      const result = await FlowcovGate.run([
+        '--target-org',
+        testOrg.username,
+        '--from',
+        'main',
+        '--to',
+        'feature',
+        '--project-dir',
+        repo.dir,
+        '--min-element-coverage',
+        '50',
+      ]);
+      expect(result.passed).toBe(false);
+      expect(result.minElementCoverage).toBe(50);
+      expect(logged()).toContain('Flow coverage gate failed: 1 Flow(s) need Apex test coverage.');
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('shows a blank element coverage for Flows missing from the org', async () => {
+      orgFlows.value = [];
+      await FlowcovGate.run(['--target-org', testOrg.username, '--flow', 'Ghost']);
+      expect(tableRows()[0]).toMatchObject({ Flow: 'Ghost', Result: 'FAIL', 'Element Coverage': '' });
+    });
+
+    it('does nothing when no Flows changed', async () => {
+      const result = await FlowcovGate.run([
+        '--target-org',
+        testOrg.username,
+        '--from',
+        'feature',
+        '--to',
+        'feature',
+        '--project-dir',
+        repo.dir,
+      ]);
+      expect(result).toEqual({ passed: true, minElementCoverage: 0, flows: [] });
+      expect(logged()).toContain('No Flows changed. Nothing to check.');
+    });
+
+    it('requires --from or --flow', async () => {
+      await expect(FlowcovGate.run(['--target-org', testOrg.username])).rejects.toThrow(/Provide --from/);
+    });
+  });
+
+  describe('scaffold', () => {
+    it('generates tests for named Flows', async () => {
+      const result = await FlowcovScaffold.run([
+        '--flow',
+        'Case_Update',
+        '--flow',
+        'Intake_Screen',
+        '--project-dir',
+        FIXTURE_PROJECT,
+        '--output-dir',
+        out,
+      ]);
+      expect(result.created.map((c) => c.className)).toEqual(['Case_Update_FlowTest']);
+      expect(logged()).toContain(
+        `Created Case_Update_FlowTest for Case_Update: ${join(out, 'Case_Update_FlowTest.cls')}`,
+      );
+      expect(logged()).toContain('Skipped Intake_Screen: Process type Flow');
+    });
+
+    it('generates tests for uncovered local Flows on a dry run', async () => {
+      orgFlows.value = [
+        coverage('Nightly_Cleanup', { covered: false }),
+        coverage('ns__Managed', { covered: false }),
+        coverage('Case_Update'),
+      ];
+      const result = await FlowcovScaffold.run([
+        '--uncovered',
+        '--target-org',
+        testOrg.username,
+        '--project-dir',
+        FIXTURE_PROJECT,
+        '--output-dir',
+        out,
+        '--dry-run',
+      ]);
+      expect(result.created.map((c) => c.flowName)).toEqual(['Nightly_Cleanup']);
+      expect(logged()).toContain('Would create Nightly_Cleanup_FlowTest');
+    });
+
+    it('says so when nothing is uncovered', async () => {
+      orgFlows.value = [coverage('Case_Update')];
+      await FlowcovScaffold.run(['--uncovered', '--target-org', testOrg.username, '--project-dir', FIXTURE_PROJECT]);
+      expect(logged()).toContain('No uncovered Flows to scaffold.');
+    });
+
+    it('requires --flow or --uncovered', async () => {
+      await expect(FlowcovScaffold.run(['--project-dir', FIXTURE_PROJECT])).rejects.toThrow(
+        /Provide --flow or --uncovered/,
+      );
+    });
+
+    it('requires an org for --uncovered', async () => {
+      await $$.stubConfig({});
+      await expect(FlowcovScaffold.run(['--uncovered', '--project-dir', FIXTURE_PROJECT])).rejects.toThrow(
+        /--uncovered needs --target-org/,
+      );
+    });
+  });
+});

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Nightly Cleanup</label>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <object>Lead</object>
+        <schedule>
+            <frequency>Daily</frequency>
+            <startDate>2026-01-01</startDate>
+            <startTime>01:00:00.000Z</startTime>
+        </schedule>
+        <triggerType>Scheduled</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>
