@@ -107,6 +107,15 @@ export class OrgCoverageSource implements CoverageSource {
    * The Tooling API returns `Flow.Metadata` only when a query returns one row, so this reads one
    * version per query. Returns undefined when the query fails or returns no content.
    */
+  public async hasAnyFlowCoverage(): Promise<boolean> {
+    try {
+      return (await this.query('SELECT Id FROM FlowTestCoverage LIMIT 1')).length > 0;
+    } catch {
+      // Without an answer, don't claim coverage is missing.
+      return true;
+    }
+  }
+
   public getFlowFingerprint(flowVersionId: string): Promise<FlowFingerprint | undefined> {
     // The gate's content check and its uncovered-element list both ask for the same versions.
     const key = idKey(flowVersionId);

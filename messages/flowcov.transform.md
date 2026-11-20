@@ -8,7 +8,7 @@ Reads Flow coverage from the target org and maps it onto the project's Flow meta
 
 Covers every active Flow and process that counts toward "Deploy processes and flows as active" and has a source file in the project. Paths in the reports are relative to --project-dir; run the command from the root your coverage tool expects. For SonarQube, the Flow files must be indexed (for example, include `**/*.flow-meta.xml` in `sonar.inclusions`) for their coverage to be imported.
 
-Coverage is read from FlowTestCoverage, which Salesforce fills in when Apex tests run in the org with coverage on (`sf apex run test --code-coverage`). Without `--code-coverage`, and in check-only deployments, Salesforce records no Flow coverage. When a Flow file's elements don't match the version the org covered, the command warns that its line coverage may be off.
+Coverage is read from FlowTestCoverage, which Salesforce fills in when Apex tests run in the org with coverage on (`sf apex run test --code-coverage`). Without `--code-coverage`, and in check-only deployments, Salesforce records no Flow coverage. When no Flow in the org has any coverage recorded, the command warns that the tests most likely ran without `--code-coverage`. When a Flow file's elements don't match the version the org covered, the command warns that its line coverage may be off.
 
 # examples
 

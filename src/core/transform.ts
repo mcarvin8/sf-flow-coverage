@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { relative, sep } from 'node:path';
 
+import { missingCoverageWarning } from './coverageCheck.js';
 import { flowElementLines } from './flowElementLines.js';
 import { findFlowFiles } from './projectFiles.js';
 import type { CoverageSource } from './types.js';
@@ -88,5 +89,10 @@ export async function buildFlowFileCoverage(options: FlowFileCoverageOptions): P
       })),
     });
   }
+  const warning = await missingCoverageWarning(
+    options.source,
+    report.files.length > 0 && flows.every((flow) => !flow.covered),
+  );
+  if (warning) report.warnings.unshift(warning);
   return report;
 }

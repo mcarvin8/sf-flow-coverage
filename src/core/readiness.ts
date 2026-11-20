@@ -1,3 +1,4 @@
+import { missingCoverageWarning } from './coverageCheck.js';
 import { findUncoveredElements } from './elementCoverage.js';
 import { DEFAULT_THRESHOLD, isProcessBuilder } from './flowTypes.js';
 import type { CoverageSource, ReadinessFlow, ReadinessResult } from './types.js';
@@ -45,6 +46,7 @@ export async function buildReadinessReport(options: ReadinessOptions): Promise<R
   // With no active Flows to cover, Salesforce has nothing to block.
   const coveragePercent = totalFlows === 0 ? 100 : Math.round((coveredFlows / totalFlows) * 1000) / 10;
   const flowsNeeded = Math.max(0, Math.ceil((threshold * totalFlows) / 100) - coveredFlows);
+  const warning = await missingCoverageWarning(options.source, totalFlows > 0 && coveredFlows === 0);
 
   return {
     threshold,
@@ -56,5 +58,6 @@ export async function buildReadinessReport(options: ReadinessOptions): Promise<R
     flowsNeeded,
     processBuilderProcesses: flows.filter((f) => isProcessBuilder(f.processType)).length,
     flows,
+    warnings: warning ? [warning] : [],
   };
 }

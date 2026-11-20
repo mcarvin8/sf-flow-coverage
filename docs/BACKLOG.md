@@ -2,13 +2,13 @@
 
 Ideas for sf-flow-coverage, ordered by value within each section. Open an issue before starting anything large. Item numbers stay fixed because pull requests refer to them, so removed items leave gaps.
 
-Suggested first picks: [Warn when coverage is missing entirely](#1-warn-when-coverage-is-missing-entirely), [Markdown output](#9-markdown-output), and [Show the deploy-as-active setting in readiness](#3-show-the-deploy-as-active-setting-in-readiness).
+Suggested first picks: [Markdown output](#9-markdown-output) and [Show the deploy-as-active setting in readiness](#3-show-the-deploy-as-active-setting-in-readiness).
 
 ## Gaps found in live testing
 
 ### 1. Warn when coverage is missing entirely
 
-If no active Flow version in the org has any `FlowTestCoverage` rows, the tests were most likely run without `--code-coverage`. Today `readiness` and `gate` just report 0%. Print a warning that names the fix (`sf apex run test --code-coverage`).
+Done: when results look like missing coverage (no active Flow covered in `readiness` and `transform`, an uncovered Flow in `gate`) and the org has no `FlowTestCoverage` rows at all, the commands warn that tests most likely ran without `--code-coverage` and name the fix.
 
 ### 2. Deeper version comparison in the gate
 

@@ -64,7 +64,7 @@ export default class FlowcovGate extends SfCommand<GateResult> {
 
     if (candidates.length === 0) {
       this.log('No Flows changed. Nothing to check.');
-      return { passed: true, minElementCoverage: flags['min-element-coverage'], flows: [] };
+      return { passed: true, minElementCoverage: flags['min-element-coverage'], flows: [], warnings: [] };
     }
 
     const connection = flags['target-org'].getConnection(flags['api-version']);
@@ -87,6 +87,7 @@ export default class FlowcovGate extends SfCommand<GateResult> {
     for (const flow of result.flows) {
       for (const warning of flow.warnings ?? []) this.warn(`${flow.flowName}: ${warning}`);
     }
+    for (const warning of result.warnings) this.warn(warning);
 
     if (result.passed) {
       this.logSuccess(`Flow coverage gate passed for ${result.flows.length} Flow(s).`);

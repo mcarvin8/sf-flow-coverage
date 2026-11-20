@@ -1,3 +1,4 @@
+import { missingCoverageWarning } from './coverageCheck.js';
 import { describeElements, findUncoveredElements } from './elementCoverage.js';
 import { compareFingerprints, type FlowFingerprint, fingerprintFromXml } from './flowFingerprint.js';
 import {
@@ -180,9 +181,15 @@ export async function evaluateGate(options: GateOptions): Promise<GateResult> {
     }
   }
 
+  // A changed Flow with no test is normal; every Flow in the org having none is not.
+  const warning = await missingCoverageWarning(
+    options.source,
+    coverage.some((c) => isCountedProcessType(c.processType) && !c.covered),
+  );
   return {
     passed: results.every((r) => r.status !== 'fail'),
     minElementCoverage,
     flows: results,
+    warnings: warning ? [warning] : [],
   };
 }

@@ -53,6 +53,7 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
     });
     this.spinner.stop();
 
+    for (const warning of result.warnings) this.warn(warning);
     this.logReport(result);
     if (flags['fail-if-not-ready'] && !result.ready) process.exitCode = 1;
     return result;

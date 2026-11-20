@@ -247,6 +247,20 @@ describe('OrgCoverageSource.getFlowCoverage', () => {
   });
 });
 
+describe('OrgCoverageSource.hasAnyFlowCoverage', () => {
+  it('reads one coverage row from the org', async () => {
+    const some = fakeQuery({ FlowTestCoverage: [{ Id: 'C1' }] });
+    expect(await new OrgCoverageSource(some.query).hasAnyFlowCoverage()).toBe(true);
+    expect(some.calls).toEqual(['SELECT Id FROM FlowTestCoverage LIMIT 1']);
+    expect(await new OrgCoverageSource(fakeQuery({}).query).hasAnyFlowCoverage()).toBe(false);
+  });
+
+  it('assumes coverage exists when the query fails', async () => {
+    const failing = fakeQuery({ FlowTestCoverage: new Error('INSUFFICIENT_ACCESS') });
+    expect(await new OrgCoverageSource(failing.query).hasAnyFlowCoverage()).toBe(true);
+  });
+});
+
 describe('OrgCoverageSource.getFlowFingerprint', () => {
   it('fingerprints the version metadata, one version per query', async () => {
     const { query, calls } = fakeQuery({

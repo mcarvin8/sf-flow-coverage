@@ -66,7 +66,7 @@ sf flowcov transform --target-org ci-sandbox --format sonar
 
 - **What counts.** Active Flows with the process types Salesforce counts toward deploy-as-active: autolaunched Flows (including record-triggered, platform event and schedule-triggered Flows) and Process Builder processes. Screen Flows don't count.
 - **Where it comes from.** Salesforce records which Flow versions each Apex test runs in the Tooling API `FlowTestCoverage` object when Apex tests run in the org. `readiness`, `gate`, and `transform` read it, so run your Apex tests before using them.
-- **Run tests with `--code-coverage`.** Without `--code-coverage`, `sf apex run test` skips coverage and Salesforce records no Flow coverage. Check-only deployments (`sf project deploy validate`) don't record it either.
+- **Run tests with `--code-coverage`.** Without `--code-coverage`, `sf apex run test` skips coverage and Salesforce records no Flow coverage. Check-only deployments (`sf project deploy validate`) don't record it either. When no Flow in the org has any coverage, `readiness`, `gate`, and `transform` warn that this is the likely cause instead of just reporting 0%.
 - **Only Apex counts.** Flow Builder tests and Flow Test Mode (Winter '27) don't count toward the 75% requirement, so `scaffold` generates Apex tests, not Flow test metadata. The coverage source is pluggable, so if Salesforce starts counting Test Mode coverage it can be added without changing the commands.
 
 ## Readiness report
@@ -165,7 +165,8 @@ DESCRIPTION
 
   Coverage is read from FlowTestCoverage in the target org. Deploy the branch to the target org and run Apex tests there
   with `sf apex run test --code-coverage` before running the gate. Without `--code-coverage`, Salesforce records no Flow
-  coverage. Flows that don't count toward deploy-as-active (screen Flows, inactive Flows) are skipped.
+  coverage. When no Flow in the org has any coverage recorded, the command warns that the tests most likely ran without
+  `--code-coverage`. Flows that don't count toward deploy-as-active (screen Flows, inactive Flows) are skipped.
 
   The gate also fails a Flow when the org has no active version of it, or when its active version is older than its
   latest version. Both usually mean the branch was deployed inactive, so the org's coverage doesn't belong to the
@@ -242,7 +243,8 @@ DESCRIPTION
 
   FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first with coverage turned on (for
   example, `sf apex run test --test-level RunLocalTests --code-coverage --wait 60`) so the report is current. Without
-  `--code-coverage`, Salesforce records no Flow coverage.
+  `--code-coverage`, Salesforce records no Flow coverage. When no Flow in the org has any coverage recorded, the command
+  warns that the tests most likely ran without `--code-coverage`.
 
 EXAMPLES
   Report readiness for the default org:
@@ -356,8 +358,9 @@ DESCRIPTION
 
   Coverage is read from FlowTestCoverage, which Salesforce fills in when Apex tests run in the org with coverage on (`sf
   apex run test --code-coverage`). Without `--code-coverage`, and in check-only deployments, Salesforce records no Flow
-  coverage. When a Flow file's elements don't match the version the org covered, the command warns that its line
-  coverage may be off.
+  coverage. When no Flow in the org has any coverage recorded, the command warns that the tests most likely ran without
+  `--code-coverage`. When a Flow file's elements don't match the version the org covered, the command warns that its
+  line coverage may be off.
 
 EXAMPLES
   Write a SonarQube generic coverage report to the coverage folder:
