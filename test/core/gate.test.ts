@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
+import type { FlowFingerprint } from '../../src/core/flowFingerprint.js';
 import { collectChangedFlows, evaluateGate } from '../../src/core/gate.js';
-import type { FlowMetadata } from '../../src/core/types.js';
+import type { CoverageSource, FlowMetadata } from '../../src/core/types.js';
 import { flowXml, TempGitRepo } from '../gitRepo.js';
 import { coverage, fakeSource } from '../helpers.js';
 
@@ -145,6 +145,94 @@ describe('evaluateGate', () => {
   });
 });
 
+describe('evaluateGate content check', () => {
+  const sourcePrint: FlowFingerprint = { processType: 'AutoLaunchedFlow', filters: [], elements: ['decisions:New'] };
+  const orgPrint: FlowFingerprint = { processType: 'AutoLaunchedFlow', filters: [], elements: ['decisions:Old'] };
+  const mismatch =
+    "The org's version 1 differs from flows/F.flow-meta.xml (only in source: decisions:New; only in the org: decisions:Old), so coverage may be stale. Deploy the branch, run Apex tests, then rerun the gate.";
+
+  /** A source whose org fingerprints are looked up by version id, recording each lookup. */
+  function sourceWith(
+    flows: Parameters<typeof fakeSource>[0],
+    prints: Record<string, FlowFingerprint | undefined>,
+  ): CoverageSource & { asked: string[] } {
+    const asked: string[] = [];
+    return {
+      ...fakeSource(flows),
+      asked,
+      getFlowFingerprint: async (id: string) => {
+        asked.push(id);
+        return prints[id];
+      },
+    };
+  }
+
+  const candidate = (flowName: string, fingerprint: FlowFingerprint | undefined = sourcePrint) => ({
+    flowName,
+    path: `flows/${flowName}.flow-meta.xml`,
+    metadata: meta(flowName),
+    fingerprint,
+  });
+
+  it('warns by default when the org version differs from source, and stays quiet when it matches', async () => {
+    const f = coverage('F');
+    const same = coverage('Same');
+    const source = sourceWith([f, same], { [f.flowVersionId]: orgPrint, [same.flowVersionId]: sourcePrint });
+    const result = await evaluateGate({ source, candidates: [candidate('F'), candidate('Same')] });
+    expect(result.passed).toBe(true);
+    expect(result.flows[0]).toMatchObject({ status: 'pass', warnings: [mismatch] });
+    expect(result.flows[1].warnings).toBeUndefined();
+  });
+
+  it('fails a passing Flow with --content-check fail, and keeps a coverage failure as the reason', async () => {
+    const f = coverage('F');
+    const bare = coverage('Bare', { covered: false });
+    const source = sourceWith([f, bare], { [f.flowVersionId]: orgPrint, [bare.flowVersionId]: orgPrint });
+    const result = await evaluateGate({
+      source,
+      candidates: [candidate('F'), candidate('Bare')],
+      contentCheck: 'fail',
+    });
+    expect(result.passed).toBe(false);
+    expect(result.flows[0]).toMatchObject({ status: 'fail', reason: mismatch });
+    expect(result.flows[0].warnings).toBeUndefined();
+    expect(result.flows[1]).toMatchObject({ status: 'fail', reason: 'No Apex test runs version 1 of this Flow.' });
+    expect(result.flows[1].warnings?.[0]).toMatch(/^The org's version 1 differs from flows\/Bare\.flow-meta\.xml/);
+  });
+
+  it('skips the comparison when it is off, impossible, or the org content cannot be read', async () => {
+    const f = coverage('F', { versionNumber: undefined });
+    const off = sourceWith([f], { [f.flowVersionId]: orgPrint });
+    const offResult = await evaluateGate({ source: off, candidates: [candidate('F')], contentCheck: 'off' });
+    expect(off.asked).toEqual([]);
+    expect(offResult.flows[0].warnings).toBeUndefined();
+
+    const noFingerprint = sourceWith([f], { [f.flowVersionId]: orgPrint });
+    await evaluateGate({ source: noFingerprint, candidates: [{ flowName: 'F' }] });
+    expect(noFingerprint.asked).toEqual([]);
+
+    const noMethod = await evaluateGate({ source: fakeSource([f]), candidates: [candidate('F')] });
+    expect(noMethod.flows[0].warnings).toBeUndefined();
+
+    const unreadable = await evaluateGate({ source: sourceWith([f], {}), candidates: [candidate('F')] });
+    expect(unreadable.flows[0].warnings).toBeUndefined();
+  });
+
+  it('names source when the candidate has no path and the version is unknown', async () => {
+    const f = coverage('F', { versionNumber: undefined });
+    const source = sourceWith([f], { [f.flowVersionId]: orgPrint });
+    const result = await evaluateGate({ source, candidates: [{ flowName: 'F', fingerprint: sourcePrint }] });
+    expect(result.flows[0].warnings?.[0]).toMatch(/^The org's version \? differs from source \(/);
+  });
+
+  it('does not compare Flows that already failed the version check', async () => {
+    const f = coverage('F', { versionState: 'noActiveVersion' });
+    const source = sourceWith([f], { [f.flowVersionId]: orgPrint });
+    await evaluateGate({ source, candidates: [candidate('F')] });
+    expect(source.asked).toEqual([]);
+  });
+});
+
 describe('collectChangedFlows', () => {
   let repo: TempGitRepo;
 
@@ -171,5 +259,6 @@ describe('collectChangedFlows', () => {
       ['Screen', 'flows/Screen.flow-meta.xml', 'Flow', 'x'],
     ]);
     expect(candidates[0].error).toMatch(/not a Flow metadata file/);
+    expect(candidates[1].fingerprint).toEqual({ processType: 'AutoLaunchedFlow', filters: [], elements: [] });
   });
 });

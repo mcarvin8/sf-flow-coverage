@@ -42,6 +42,12 @@ export default class FlowcovGate extends SfCommand<GateResult> {
       min: 0,
       max: 100,
     }),
+    'content-check': Flags.option({
+      summary: messages.getMessage('flags.content-check.summary'),
+      description: messages.getMessage('flags.content-check.description'),
+      options: ['warn', 'fail', 'off'] as const,
+      default: 'warn',
+    })(),
   };
 
   public async run(): Promise<GateResult> {
@@ -66,6 +72,7 @@ export default class FlowcovGate extends SfCommand<GateResult> {
       source: new OrgCoverageSource(toolingQuery(connection)),
       candidates,
       minElementCoverage: flags['min-element-coverage'],
+      contentCheck: flags['content-check'],
     });
 
     this.table({
@@ -76,6 +83,10 @@ export default class FlowcovGate extends SfCommand<GateResult> {
         Reason: f.reason,
       })),
     });
+
+    for (const flow of result.flows) {
+      for (const warning of flow.warnings ?? []) this.warn(`${flow.flowName}: ${warning}`);
+    }
 
     if (result.passed) {
       this.logSuccess(`Flow coverage gate passed for ${result.flows.length} Flow(s).`);

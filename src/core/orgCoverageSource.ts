@@ -1,3 +1,4 @@
+import { type FlowFingerprint, fingerprintFromMetadata } from './flowFingerprint.js';
 import { COUNTED_PROCESS_TYPES, qualifiedFlowName, splitFlowName } from './flowTypes.js';
 import type { CoverageSource, FlowCoverage, FlowTestRef, ToolingQuery } from './types.js';
 
@@ -98,6 +99,21 @@ export class OrgCoverageSource implements CoverageSource {
       const definition = definitionByVersion.get(idKey(flow.flowVersionId));
       return definition ? { ...flow, ...versionInfo(definition) } : flow;
     });
+  }
+
+  /**
+   * The Tooling API returns `Flow.Metadata` only when a query returns one row, so this reads one
+   * version per query. Returns undefined when the query fails or returns no content.
+   */
+  public async getFlowFingerprint(flowVersionId: string): Promise<FlowFingerprint | undefined> {
+    try {
+      const [record] = await this.query<{ Metadata?: unknown }>(
+        `SELECT Metadata FROM Flow WHERE Id = ${soqlList([flowVersionId])}`,
+      );
+      return record?.Metadata ? fingerprintFromMetadata(record.Metadata) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async queryInChunks<T extends Record<string, unknown>>(
