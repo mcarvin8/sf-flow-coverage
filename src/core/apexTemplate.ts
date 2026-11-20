@@ -3,7 +3,7 @@ import { type CriteriaPlan, solveCriteria } from './criteria.js';
 import { type FieldState, type FieldWrite, type FlowWalk, walkFlow } from './flowGraph.js';
 import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './flowTypes.js';
 import { escapeApexString } from './flowXml.js';
-import { canInsertParent, EXISTING_RECORD_IDS, type RequiredFieldMap } from './requiredFields.js';
+import { canInsertParent, EXISTING_RECORD_IDS, MAX_PARENT_DEPTH, type RequiredFieldMap } from './requiredFields.js';
 import type { FlowMetadata, FlowVariable } from './types.js';
 
 const MAX_CLASS_NAME = 40;
@@ -492,6 +492,8 @@ export type GenerateOptions = {
   nullWhenUnset?: Record<string, string[]>;
   /** Lookup field per relationship name (`Account` to `AccountId`), per object. Meets criteria on related records. */
   relationships?: Record<string, Record<string, string>>;
+  /** How many record types each object has, including Master. Lets record type lookups be filled. */
+  recordTypes?: Record<string, number>;
 };
 
 type ResolvedLookups = {
@@ -510,8 +512,16 @@ function resolveLookups(options: GenerateOptions): ResolvedLookups {
   const required: RequiredFieldMap = { ...options.requiredFields };
   const fieldValues: RequiredFieldMap = { ...options.fieldValues };
   const parents = new Map<string, string>();
-  const lookupValue = (target: string): string | undefined => {
+  const lookupValue = (target: string, source: string): string | undefined => {
     if (target in EXISTING_RECORD_IDS) return EXISTING_RECORD_IDS[target];
+    // Setup data a test can read without inserting: the org's default business hours, and a
+    // record type of the object when the describe shows it has any besides Master.
+    if (target === 'BusinessHours') return '[SELECT Id FROM BusinessHours WHERE IsDefault = true LIMIT 1].Id';
+    if (target === 'RecordType') {
+      return (options.recordTypes?.[source] ?? 0) > 1
+        ? `[SELECT Id FROM RecordType WHERE SobjectType = '${source}' AND IsActive = true LIMIT 1].Id`
+        : undefined;
+    }
     if (!canInsertParent(target) || !options.requiredFields?.[target]) return undefined;
     const variable = `${camel(target) || 'record'}Parent`;
     parents.set(variable, target);
@@ -519,7 +529,7 @@ function resolveLookups(options: GenerateOptions): ResolvedLookups {
   };
   for (const [object, fields] of Object.entries(options.lookups ?? {})) {
     for (const [field, target] of Object.entries(fields)) {
-      const value = lookupValue(target);
+      const value = lookupValue(target, object);
       if (value === undefined) continue;
       if (required[object] && field in required[object]) required[object] = { ...required[object], [field]: value };
       fieldValues[object] = { ...fieldValues[object], [field]: value };
@@ -530,37 +540,63 @@ function resolveLookups(options: GenerateOptions): ResolvedLookups {
 
 const METHOD_START = /^\s+static void \w+\(\) \{$/;
 
+const PARENT_ID = /\b(\w+Parent)\.Id\b/g;
+
 /**
- * Inserts each parent record a test method uses at the top of that method. Parents get their
- * own required fields from the describe; their lookups stay TODOs (one level deep).
+ * Inserts each parent record a test method uses at the top of that method, with the parents
+ * those parents need inserted first. A parent gets its own required fields and the fields the
+ * criteria need on it. A lookup back into its own chain (a cycle), or past
+ * `MAX_PARENT_DEPTH`, keeps its TODO.
  */
 function withParentInserts(
   lines: string[],
   parents: Map<string, string>,
   required: RequiredFieldMap,
+  original: RequiredFieldMap,
   parentFields: Map<string, Map<string, string>>,
 ): string[] {
   if (parents.size === 0) return lines;
   const i2 = INDENT.repeat(2);
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    out.push(lines[i]);
-    if (!METHOD_START.test(lines[i])) continue;
-    const body = lines.slice(i + 1, lines.indexOf(`${INDENT}}`, i)).join('\n');
-    const used = [...parents].filter(([variable]) => new RegExp(`\\b${variable}\\.Id\\b`).test(body));
-    for (const [variable, object] of used) {
+  const referenced = (text: string): string[] =>
+    [...new Set([...text.matchAll(PARENT_ID)].map((m) => m[1]))].filter((v) => parents.has(v));
+
+  const insertParents = (variables: string[]): string[] => {
+    const out: string[] = [];
+    const done = new Set<string>();
+    const visit = (variable: string, chain: string[]): void => {
+      if (done.has(variable)) return;
+      const object = parents.get(variable) as string;
+      const here = [...chain, variable];
+      const fields = recordFieldValues(object, parentFields.get(object) ?? new Map(), required);
+      for (const [field, value] of fields) {
+        const refs = referenced(value);
+        if (refs.some((r) => here.includes(r)) || (refs.length > 0 && here.length >= MAX_PARENT_DEPTH)) {
+          fields.set(field, original[object]?.[field] ?? 'null /* TODO: set this lookup */');
+        }
+      }
+      for (const dependency of referenced([...fields.values()].join('\n'))) visit(dependency, here);
+      done.add(variable);
       out.push(
         ...newRecord(
           object,
           variable,
-          recordFields(object, parentFields.get(object) ?? new Map(), required),
+          [...fields].map(([f, v]) => `${f} = ${v}`),
           i2,
           required,
         ),
         `${i2}insert ${variable};`,
       );
-    }
-    if (used.length > 0) out.push('');
+    };
+    for (const variable of variables) visit(variable, []);
+    return out;
+  };
+
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    if (!METHOD_START.test(lines[i])) continue;
+    const used = referenced(lines.slice(i + 1, lines.indexOf(`${INDENT}}`, i)).join('\n'));
+    if (used.length > 0) out.push(...insertParents(used), '');
   }
   return out;
 }
@@ -614,7 +650,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
       methods = processMethod(flow);
   }
 
-  methods = withParentInserts(methods, lookups.parents, options.requiredFields ?? {}, values.parentFields);
+  methods = withParentInserts(methods, lookups.parents, required, options.requiredFields ?? {}, values.parentFields);
   const body = [...header(flow, description), `private class ${className} {`, ...methods, '}', ''].join('\n');
   return { className, body, kind };
 }

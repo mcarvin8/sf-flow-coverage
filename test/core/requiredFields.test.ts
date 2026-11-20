@@ -109,6 +109,7 @@ describe('loadObjectFields', () => {
       lookups: { Installation__c: {} },
       nullWhenUnset: { Installation__c: [] },
       relationships: { Installation__c: {} },
+      recordTypes: {},
     });
   });
 
@@ -126,17 +127,19 @@ describe('loadObjectFields', () => {
 });
 
 describe('lookupTargets', () => {
-  it('lists createable lookups to a single object', () => {
+  it('lists createable lookups, picking a target for polymorphic ones', () => {
     expect(
       lookupTargets([
         field('Account__c', 'reference', { referenceTo: ['Account'] }),
-        field('WhatId', 'reference', { referenceTo: ['Account', 'Opportunity'] }),
+        field('WhatId', 'reference', { referenceTo: ['RecordType', 'Opportunity', 'Account'] }),
+        field('OwnerId', 'reference', { referenceTo: ['Group', 'User'] }),
+        field('Setup__c', 'reference', { referenceTo: ['Group', 'Profile'] }),
         field('CreatedById', 'reference', { referenceTo: ['User'], createable: false }),
         field('Formula__c', 'reference', { referenceTo: ['Account'], calculated: true }),
         field('Other__c', 'reference'),
         field('Name', 'string'),
       ]),
-    ).toEqual({ Account__c: 'Account' });
+    ).toEqual({ Account__c: 'Account', WhatId: 'Opportunity', OwnerId: 'User' });
   });
 });
 
@@ -244,6 +247,73 @@ describe('generateApexTest with lookups', () => {
     expect(test.body).toContain('Account__c = null /* TODO: set a Account Id */');
     expect(test.body).toContain('Type__c = null /* TODO: set a RecordType Id */');
     expect(test.body).not.toContain('accountParent');
+  });
+
+  it('inserts grandparents first, and keeps the TODO for cycles and past the depth limit', () => {
+    const todo = (target: string) => `null /* TODO: set a ${target} Id */`;
+    const test = generateApexTest(recordFlow(), {
+      requiredFields: {
+        Job__c: { Account__c: todo('Account') },
+        Account: { Name: "'A'", Region__c: todo('Region__c'), ParentId: todo('Account') },
+        Region__c: { Name: "'R'", Zone__c: todo('Zone__c') },
+        Zone__c: { Name: "'Z'", Area__c: todo('Area__c') },
+        Area__c: { Name: "'X'" },
+      },
+      lookups: {
+        Job__c: { Account__c: 'Account' },
+        Account: { Region__c: 'Region__c', ParentId: 'Account' },
+        Region__c: { Zone__c: 'Zone__c' },
+        Zone__c: { Area__c: 'Area__c' },
+      },
+    });
+    expect(test.body).toContain(
+      [
+        '        Zone__c zoneParent = new Zone__c(',
+        "            Name = 'Z',",
+        '            Area__c = null /* TODO: set a Area__c Id */',
+        '        );',
+        '        insert zoneParent;',
+        '        Region__c regionParent = new Region__c(',
+        "            Name = 'R',",
+        '            Zone__c = zoneParent.Id',
+        '        );',
+        '        insert regionParent;',
+        '        Account accountParent = new Account(',
+        "            Name = 'A',",
+        '            Region__c = regionParent.Id,',
+        '            ParentId = null /* TODO: set a Account Id */',
+        '        );',
+        '        insert accountParent;',
+        '',
+        '        Job__c testRecord = new Job__c(',
+        '            Account__c = accountParent.Id',
+      ].join('\n'),
+    );
+    expect(test.body).not.toContain('areaParent');
+  });
+
+  it('reads business hours and record types the org already has', () => {
+    const test = generateApexTest(
+      recordFlow({
+        filters: [
+          { field: 'BusinessHoursId', operator: 'IsNull', apexValue: 'false', rawValue: 'false' },
+          { field: 'RecordTypeId', operator: 'IsNull', apexValue: 'false', rawValue: 'false' },
+        ],
+      }),
+      {
+        lookups: { Job__c: { BusinessHoursId: 'BusinessHours', RecordTypeId: 'RecordType' } },
+        recordTypes: { Job__c: 3 },
+      },
+    );
+    expect(test.body).toContain('BusinessHoursId = [SELECT Id FROM BusinessHours WHERE IsDefault = true LIMIT 1].Id,');
+    expect(test.body).toContain(
+      "RecordTypeId = [SELECT Id FROM RecordType WHERE SobjectType = 'Job__c' AND IsActive = true LIMIT 1].Id",
+    );
+    const noTypes = generateApexTest(
+      recordFlow({ filters: [{ field: 'RecordTypeId', operator: 'IsNull', apexValue: 'false', rawValue: 'false' }] }),
+      { lookups: { Job__c: { RecordTypeId: 'RecordType' } }, recordTypes: { Job__c: 1 } },
+    );
+    expect(noTypes.body).toContain('// TODO: entry criteria: RecordTypeId IsNull false');
   });
 
   it('fills required lookups on sObject inputs of autolaunched Flows', () => {

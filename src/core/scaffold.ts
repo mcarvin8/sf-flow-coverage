@@ -11,6 +11,7 @@ import {
   type DescribeObject,
   emptyObjectFields,
   loadObjectFields,
+  MAX_PARENT_DEPTH,
   type ObjectFields,
 } from './requiredFields.js';
 import type { FlowMetadata, ScaffoldResult } from './types.js';
@@ -56,8 +57,7 @@ function criteriaLookups(flow: FlowMetadata, relationships: Record<string, strin
 
 /**
  * Objects a generated test inserts as parents: targets of lookups that are required, or that
- * the entry criteria reference, on the records the test creates. One level deep: a parent's
- * own required lookups stay TODOs.
+ * the entry criteria reference, on the records the test creates.
  */
 function parentObjects(flows: FlowMetadata[], fields: ObjectFields): string[] {
   const parents: string[] = [];
@@ -71,6 +71,15 @@ function parentObjects(flows: FlowMetadata[], fields: ObjectFields): string[] {
     }
   }
   return parents;
+}
+
+/** Targets of the required lookups on the given (already described) parent objects. */
+function grandparentObjects(objects: string[], fields: ObjectFields): string[] {
+  return objects.flatMap((object) =>
+    Object.entries(fields.lookups[object] ?? {})
+      .filter(([field, target]) => field in (fields.requiredFields[object] ?? {}) && canInsertParent(target))
+      .map(([, target]) => target),
+  );
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -123,14 +132,15 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       options.describe,
       objectFields,
     );
-    await loadObjectFields(
-      parentObjects(
-        flows.map((f) => f.flow),
-        objectFields,
-      ),
-      options.describe,
+    let level = parentObjects(
+      flows.map((f) => f.flow),
       objectFields,
     );
+    for (let depth = 1; depth <= MAX_PARENT_DEPTH && level.length > 0; depth++) {
+      const fresh = [...new Set(level)].filter((object) => !(object in objectFields.requiredFields));
+      await loadObjectFields(fresh, options.describe, objectFields);
+      level = grandparentObjects(fresh, objectFields);
+    }
   }
 
   for (const { flowName, flow } of flows) {

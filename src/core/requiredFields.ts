@@ -17,7 +17,10 @@ export type DescribeField = {
 };
 
 /** Describes an sObject's fields. Returns undefined when the object can't be described. */
-export type DescribeObject = (objectName: string) => Promise<DescribeField[] | undefined>;
+export type DescribeObject = (objectName: string) => Promise<DescribeField[] | DescribeResult | undefined>;
+
+/** An sObject describe: its fields, and its record types when known. */
+export type DescribeResult = { fields: DescribeField[]; recordTypeInfos?: unknown[] };
 
 /** Field name to Apex literal, per object. */
 export type RequiredFieldMap = Record<string, Record<string, string>>;
@@ -154,6 +157,8 @@ export type ObjectFields = {
   lookups: Record<string, Record<string, string>>;
   /** Lookup field per relationship name (`Account__r` to `Account__c`), per object. */
   relationships: Record<string, Record<string, string>>;
+  /** How many record types each object has, including Master, when the describe says. */
+  recordTypes: Record<string, number>;
   /** Fields that stay empty when a test doesn't set them (no default value), per object. */
   nullWhenUnset: Record<string, string[]>;
 };
@@ -164,6 +169,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   changedValues: {},
   lookups: {},
   relationships: {},
+  recordTypes: {},
   nullWhenUnset: {},
 });
 
@@ -183,6 +189,9 @@ const NOT_INSERTABLE = new Set([
   'RecordType',
   'UserRole',
 ]);
+
+/** Parents are inserted this many levels deep at most: parent, grandparent, great-grandparent. */
+export const MAX_PARENT_DEPTH = 3;
 
 /** Whether a generated test can insert a record of `object` to fill a lookup to it. */
 export const canInsertParent = (object: string): boolean =>
@@ -206,7 +215,6 @@ export function nullWhenUnsetFields(fields: DescribeField[]): string[] {
     .map((field) => field.name);
 }
 
-/** Createable lookups to exactly one object (polymorphic lookups like `WhatId` are left out). */
 /** Lookup field per relationship name, for criteria on related records. */
 export function relationshipLookups(fields: DescribeField[]): Record<string, string> {
   const relationships: Record<string, string> = {};
@@ -216,11 +224,20 @@ export function relationshipLookups(fields: DescribeField[]): Record<string, str
   return relationships;
 }
 
+/**
+ * The object each createable lookup points to. A polymorphic lookup (`WhatId`, `OwnerId`) gets
+ * the running user when it can point at users, else the first object a test can insert.
+ */
 export function lookupTargets(fields: DescribeField[]): Record<string, string> {
   const targets: Record<string, string> = {};
   for (const field of fields) {
     if (field.type !== 'reference' || !field.createable || field.calculated) continue;
-    if (field.referenceTo?.length === 1) targets[field.name] = field.referenceTo[0];
+    const options = field.referenceTo ?? [];
+    const target =
+      options.length === 1
+        ? options[0]
+        : (options.find((o) => o in EXISTING_RECORD_IDS) ?? options.find((o) => canInsertParent(o)));
+    if (target) targets[field.name] = target;
   }
   return targets;
 }
@@ -236,11 +253,15 @@ export async function loadObjectFields(
 ): Promise<ObjectFields> {
   for (const object of [...new Set(objects)]) {
     if (object in into.requiredFields) continue;
-    let fields: DescribeField[] | undefined;
+    let result: DescribeField[] | DescribeResult | undefined;
     try {
-      fields = await describe(object);
+      result = await describe(object);
     } catch {
-      fields = undefined;
+      result = undefined;
+    }
+    const fields = Array.isArray(result) ? result : result?.fields;
+    if (result && !Array.isArray(result) && result.recordTypeInfos) {
+      into.recordTypes[object] = result.recordTypeInfos.length;
     }
     if (fields) {
       into.requiredFields[object] = requiredFieldValues(fields);

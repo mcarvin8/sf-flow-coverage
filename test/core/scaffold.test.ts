@@ -86,8 +86,11 @@ describe('scaffoldTests', () => {
         outputDir: out,
         describe: async (name) => {
           described.push(name);
-          if (name !== 'Job__c')
-            return [{ name: 'Name', type: 'string', nillable: false, createable: true, defaultedOnCreate: false }];
+          const name_ = { name: 'Name', type: 'string', nillable: false, createable: true, defaultedOnCreate: false };
+          // Account requires a lookup to Territory__c, which the test inserts first.
+          if (name === 'Account')
+            return { fields: [name_, reference('Territory__c', 'Territory__c', false)], recordTypeInfos: [{}] };
+          if (name !== 'Job__c') return [name_];
           return [
             reference('Account__c', 'Account', false),
             reference('Contact__c', 'Contact'),
@@ -98,9 +101,10 @@ describe('scaffoldTests', () => {
           ];
         },
       });
-      expect(described).toEqual(['Job__c', 'Account', 'Contact', 'Site__c', 'Region__c']);
+      expect(described).toEqual(['Job__c', 'Account', 'Contact', 'Site__c', 'Region__c', 'Territory__c']);
       const test = readFileSync(join(out, 'Job_Flow_FlowTest.cls'), 'utf8');
       expect(test).toContain('Account__c = accountParent.Id');
+      expect(test).toContain('Territory__c = territoryParent.Id');
       expect(test).toContain('Approver__c = UserInfo.getUserId()');
       expect(test).toContain('Contact__c = contactParent.Id');
       expect(test).toContain('Site__c = siteParent.Id');
