@@ -41,6 +41,21 @@ function parseVariables(flow: XmlRecord): FlowVariable[] {
 }
 
 /**
+ * The fields a Flow reads from each record variable (`{!myRecord.Status__c}`, or a reference to
+ * `myRecord.Account__r.Name`), so a test can query them before passing the record in.
+ */
+function recordReads(xml: string, variables: FlowVariable[]): Record<string, string[]> {
+  const reads: Record<string, string[]> = {};
+  for (const variable of variables.filter((v) => v.dataType === 'SObject' && !v.isCollection)) {
+    // Variable names are API names (letters, digits, underscores), so they need no escaping.
+    const pattern = new RegExp(`(?:>|\\{!)\\s*${variable.name}\\.([A-Za-z]\\w*(?:\\.[A-Za-z]\\w*)*)`, 'g');
+    const fields = new Set([...xml.matchAll(pattern)].map((m) => m[1]).filter((f) => f !== 'Id'));
+    if (fields.size > 0) reads[variable.name] = [...fields].sort();
+  }
+  return reads;
+}
+
+/**
  * Reads the parts of a Flow metadata file needed to judge whether it counts toward
  * the deploy-as-active coverage requirement and to scaffold an Apex test for it.
  * Throws when the content is not a Flow.
@@ -50,6 +65,7 @@ export function parseFlowXml(name: string, xml: string): FlowMetadata {
   const flow = asRecord(doc?.Flow);
   if (!flow) throw new Error(`${name} is not a Flow metadata file (no <Flow> root element).`);
   const start = asRecord(flow.start) ?? {};
+  const variables = parseVariables(flow);
   return {
     name,
     label: text(flow.label),
@@ -61,7 +77,8 @@ export function parseFlowXml(name: string, xml: string): FlowMetadata {
     filters: parseFilters(start),
     filterLogic: text(start.filterLogic),
     filterFormula: text(start.filterFormula),
-    variables: parseVariables(flow),
+    variables,
     graph: parseFlowGraph(flow),
+    recordReads: recordReads(xml, variables),
   };
 }

@@ -102,10 +102,43 @@ describe('parseFlowGraph', () => {
     expect(Object.keys(graph.formulas)).toEqual(['isBig']);
   });
 
+  it('marks creates and updates that have a fault path, and reads filters on variables', () => {
+    const fault = '<faultConnector><targetReference>Log</targetReference></faultConnector>';
+    const graph = graphOf(
+      [
+        `<recordCreates><name>First</name><object>Task</object><inputAssignments><field>Subject</field><value>${str('x')}</value></inputAssignments>${fault}${next('Save')}</recordCreates>`,
+        `<recordUpdates><name>Save</name><inputReference>$Record</inputReference><inputAssignments><field>Done__c</field><value>${bool(true)}</value></inputAssignments>${fault}${next('Plain')}</recordUpdates>`,
+        `<recordCreates><name>Plain</name><object>Task</object>${next('Find')}</recordCreates>`,
+        `<recordLookups><name>Find</name><object>Item__c</object><storeOutputAutomatically>true</storeOutputAutomatically>
+          <filters><field>Id</field><operator>EqualTo</operator><value>${ref('itemId')}</value></filters>
+          <filters><field>Account__c</field><operator>EqualTo</operator><value>${ref('accountId')}</value></filters>
+          <filters><field>Name</field><operator>EqualTo</operator><value>${str('x')}</value></filters>
+          <filters><field>Owner__c</field><operator>EqualTo</operator><value>${ref('$Record.OwnerId')}</value></filters>
+        </recordLookups>`,
+        `<recordDeletes><name>Remove</name><object>Old__c</object><filters><field>Id</field><operator>EqualTo</operator><value>${ref('oldId')}</value></filters></recordDeletes>`,
+        `<recordDeletes><name>No_Object</name><inputReference>rows</inputReference></recordDeletes>`,
+      ].join(''),
+    );
+    const walk = walkFlow(graph, new Map());
+    expect(walk.creates?.map((c) => [c.element, c.mayFail ?? false])).toEqual([
+      ['First', true],
+      ['Plain', false],
+    ]);
+    expect(walk.writes).toEqual([
+      { field: 'Done__c', element: 'Save', mayFail: true, value: { apexValue: 'true', rawValue: 'true' } },
+    ]);
+    expect(graph.idFilters).toEqual([
+      { variable: 'itemId', object: 'Item__c', field: 'Id' },
+      { variable: 'accountId', object: 'Item__c', field: 'Account__c' },
+      { variable: 'oldId', object: 'Old__c', field: 'Id' },
+    ]);
+  });
+
   it('reads an empty Flow', () => {
     expect(parseFlowXml('F', '<Flow><processType>Flow</processType></Flow>').graph).toEqual({
       nodes: {},
       formulas: {},
+      idFilters: [],
     });
   });
 });

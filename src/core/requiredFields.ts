@@ -14,6 +14,10 @@ export type DescribeField = {
   length?: number;
   picklistValues?: Array<{ value: string; active: boolean; defaultValue?: boolean }> | null;
   referenceTo?: string[] | null;
+  /** True when no two records may share a value. */
+  unique?: boolean;
+  /** True for picklists that reject values not in their list. */
+  restrictedPicklist?: boolean;
   /** The field's default value, such as a checkbox's `true` or `false`. */
   defaultValue?: unknown;
   /** For lookups, the relationship name used in paths such as `Account__r.Type`. */
@@ -36,8 +40,25 @@ function textValue(field: DescribeField, text: string): string {
   return `'${escapeApexString(text.slice(0, max))}'`;
 }
 
+/** A value no other record in the test shares, for unique fields. */
+function uniqueValue(field: DescribeField, prefix: string): string | undefined {
+  const random = 'Math.abs(Crypto.getRandomInteger())';
+  if (field.name === 'Username' || field.type === 'email')
+    return `'${prefix.toLowerCase()}' + ${random} + '@example.com.flowtest'`;
+  if (['string', 'textarea', 'encryptedstring', 'phone', 'url'].includes(field.type)) {
+    const max = field.length && field.length > 0 ? field.length : 255;
+    return `('${prefix}' + ${random}).left(${max})`;
+  }
+  return undefined;
+}
+
 /** An Apex literal for a required field, or undefined when no safe value can be made up. */
 export function apexValueForField(field: DescribeField): string | undefined {
+  // A username must look like an email address and be unique across every org.
+  if (field.unique || field.name === 'Username') {
+    const value = uniqueValue(field, 'Test');
+    if (value) return value;
+  }
   switch (field.type) {
     case 'string':
     case 'textarea':
@@ -107,6 +128,10 @@ export function settableFieldValues(fields: DescribeField[]): Record<string, str
  * second value (lookups, single-value picklists, unknown types).
  */
 export function changedValueForField(field: DescribeField): string | undefined {
+  if (field.unique || field.name === 'Username') {
+    const value = uniqueValue(field, 'Changed');
+    if (value) return value;
+  }
   switch (field.type) {
     case 'string':
     case 'textarea':
@@ -167,9 +192,25 @@ export type ObjectFields = {
   readOnlyFields: Record<string, string[]>;
   /** Fields a test can set on insert but not change in an update, per object. */
   createOnlyFields: Record<string, string[]>;
+  /** Active picklist values per picklist field, per object, and whether the picklist rejects others. */
+  picklists: Record<string, Record<string, PicklistInfo>>;
   /** What a new record holds in each field a test doesn't set, per object (see `unsetFieldValues`). */
   unsetValues: Record<string, Record<string, string | null>>;
 };
+
+/** A picklist's active values, and whether it rejects values not among them. */
+export type PicklistInfo = { values: string[]; restricted: boolean };
+
+/** Active values of each single-select picklist. */
+export function picklistInfo(fields: DescribeField[]): Record<string, PicklistInfo> {
+  const picklists: Record<string, PicklistInfo> = {};
+  for (const field of fields) {
+    if (field.type !== 'picklist') continue;
+    const values = (field.picklistValues ?? []).filter((v) => v.active).map((v) => v.value);
+    picklists[field.name] = { values, restricted: field.restrictedPicklist === true };
+  }
+  return picklists;
+}
 
 export const emptyObjectFields = (): ObjectFields => ({
   requiredFields: {},
@@ -180,12 +221,14 @@ export const emptyObjectFields = (): ObjectFields => ({
   recordTypes: {},
   readOnlyFields: {},
   createOnlyFields: {},
+  picklists: {},
   unsetValues: {},
 });
 
 /** Lookup targets a test points at an existing record instead of inserting one. */
 export const EXISTING_RECORD_IDS: Record<string, string> = {
   User: 'UserInfo.getUserId()',
+  Profile: 'UserInfo.getProfileId()',
   Pricebook2: 'Test.getStandardPricebookId()',
 };
 
@@ -292,6 +335,7 @@ export async function loadObjectFields(
       into.readOnlyFields[object] = fields
         .filter((f) => !f.createable || f.calculated || f.autoNumber)
         .map((f) => f.name);
+      into.picklists[object] = picklistInfo(fields);
       into.createOnlyFields[object] = fields
         .filter((f) => f.createable && !f.calculated && !f.autoNumber && f.updateable === false)
         .map((f) => f.name);

@@ -371,6 +371,36 @@ describe('generateApexTest assertions from the Flow', () => {
     expect(test.body).toMatchSnapshot();
   });
 
+  it('does not assert records of managed package objects, which the package may change or delete', () => {
+    const create = (object: string) =>
+      `<recordCreates><name>Make_${object.replace(/__/g, '_')}</name><object>${object}</object><inputAssignments><field>Record_Id__c</field><value><elementReference>$Record.Id</elementReference></value></inputAssignments><inputAssignments><field>Start__c</field><value><booleanValue>true</booleanValue></value></inputAssignments><connector><targetReference>Make_Local_c</targetReference></connector></recordCreates>`;
+    const elements =
+      create('pkg__Job__c').replace('<name>Make_pkg_Job_c</name>', '<name>First</name>') +
+      create('Local__c').replace('<connector><targetReference>Make_Local_c</targetReference></connector>', '');
+    const test = generateApexTest(jobFlow(elements));
+    expect(test.body).toContain(
+      '// TODO: First creates a pkg__Job__c, which its managed package may change or delete; assert it',
+    );
+    expect(test.body).toContain(
+      'for (Local__c created2 : [SELECT Id, Start__c FROM Local__c WHERE Record_Id__c = :testRecord.Id]) {',
+    );
+    expect(test.body).not.toContain('FROM pkg__Job__c');
+  });
+
+  it('does not assert creates or updates that can fail into a fault path', () => {
+    const fault = '<faultConnector><targetReference>Log</targetReference></faultConnector>';
+    const elements =
+      `<recordCreates><name>First</name><object>Task</object><inputAssignments><field>WhatId</field><value><elementReference>$Record.Id</elementReference></value></inputAssignments>${fault}<connector><targetReference>Save</targetReference></connector></recordCreates>` +
+      `<recordUpdates><name>Save</name><inputReference>$Record</inputReference><inputAssignments><field>Done__c</field><value><booleanValue>true</booleanValue></value></inputAssignments>${fault}</recordUpdates>`;
+    const test = generateApexTest(jobFlow(elements));
+    expect(test.body).toContain('// TODO: First creates a Task unless it fails and its fault path runs; assert it');
+    expect(test.body).toContain(
+      '// TODO: Save sets Done__c to true unless it fails and its fault path runs; assert it',
+    );
+    expect(test.body).not.toContain('Assert.isFalse([SELECT');
+    expect(test.body).not.toContain('Assert.areEqual(true, result.Done__c');
+  });
+
   it('follows decisions on checkbox and picklist defaults, prior values, and lookups the test leaves empty', () => {
     const decision = (name: string, left: string, operator: string, right: string, yes: string, no: string): string =>
       `<decisions><name>${name}</name><label>${name}</label><defaultConnector><targetReference>${no}</targetReference></defaultConnector><rules><name>${name}_Yes</name><label>Yes</label><conditionLogic>and</conditionLogic><conditions><leftValueReference>${left}</leftValueReference><operator>${operator}</operator><rightValue>${right}</rightValue></conditions><connector><targetReference>${yes}</targetReference></connector></rules></decisions>`;
@@ -387,6 +417,40 @@ describe('generateApexTest assertions from the Flow', () => {
     });
     expect(test.body).toContain("\n        Assert.areEqual('all', result.Out__c, 'Set should set Out__c');");
     expect(test.body).not.toContain('TODO: when');
+  });
+
+  it('passes real record Ids for text inputs the Flow uses as Ids, and queries the fields it reads from record inputs', () => {
+    const variable = (name: string, extra = '') =>
+      `<variables><name>${name}</name><dataType>String</dataType><isInput>true</isInput><isOutput>false</isOutput><isCollection>false</isCollection>${extra}</variables>`;
+    const lookup = (name: string, object: string, field: string, input: string, next = '') =>
+      `<recordLookups><name>${name}</name><object>${object}</object><storeOutputAutomatically>true</storeOutputAutomatically><filters><field>${field}</field><operator>EqualTo</operator><value><elementReference>${input}</elementReference></value></filters>${next ? `<connector><targetReference>${next}</targetReference></connector>` : ''}</recordLookups>`;
+    const flow = parseFlowXml(
+      'Calc',
+      `<Flow><processType>AutoLaunchedFlow</processType>
+        ${variable('itemId')}${variable('accountId')}${variable('ownerId')}${variable('otherId')}${variable('plain')}
+        <variables><name>job</name><dataType>SObject</dataType><objectType>Job__c</objectType><isInput>true</isInput><isOutput>false</isOutput><isCollection>false</isCollection></variables>
+        ${lookup('First', 'Item__c', 'Id', 'itemId', 'Second')}${lookup('Second', 'Item__c', 'Account__c', 'accountId', 'Third')}
+        ${lookup('Third', 'Item__c', 'Owner__c', 'ownerId', 'Fourth')}${lookup('Fourth', 'Other__c', 'Id', 'otherId')}
+        <decisions><name>Check</name><rules><name>R</name><conditionLogic>and</conditionLogic><conditions><leftValueReference>job.Status__c</leftValueReference><operator>EqualTo</operator><rightValue><stringValue>x</stringValue></rightValue></conditions></rules></decisions>
+        <formulas><name>f</name><expression>{!job.Account__r.Name}</expression></formulas>
+        <start><connector><targetReference>First</targetReference></connector></start>
+      </Flow>`,
+    );
+    expect(flow.recordReads).toEqual({ job: ['Account__r.Name', 'Status__c'] });
+    const test = generateApexTest(flow, {
+      requiredFields: { Item__c: { Name: "'Test'" }, Account: { Name: "'A'" }, Job__c: {} },
+      lookups: { Item__c: { Account__c: 'Account', Owner__c: 'User' } },
+    });
+    expect(test.body).toContain(
+      "        Item__c itemIdRecord = new Item__c(\n            Name = 'Test'\n        );\n        insert itemIdRecord;\n        inputs.put('itemId', itemIdRecord.Id);",
+    );
+    expect(test.body).toContain("insert accountIdRecord;\n        inputs.put('accountId', accountIdRecord.Id);");
+    expect(test.body).toContain("inputs.put('ownerId', UserInfo.getUserId());");
+    expect(test.body).toContain("inputs.put('otherId', null); // TODO: the Id of a Other__c record");
+    expect(test.body).toContain("inputs.put('plain', 'test'); // TODO: String");
+    expect(test.body).toContain(
+      "insert jobInput;\n        jobInput = [SELECT Id, Account__r.Name, Status__c FROM Job__c WHERE Id = :jobInput.Id];\n        inputs.put('job', jobInput);",
+    );
   });
 
   it('asserts output variables an autolaunched Flow is certain to set', () => {
@@ -565,6 +629,25 @@ describe('generateApexTest entry-criteria operators', () => {
       expect(test.body).toContain('Hours__c = 5,');
       expect(test.body).toContain('Due__c = Date.today().addDays(-1)');
       expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('spells picklist values as the picklist does, and leaves values a restricted picklist lacks as TODOs', () => {
+      const picklists = {
+        Job__c: {
+          Phase__c: { values: ['Phase II'], restricted: true },
+          Stage__c: { values: ['Open'], restricted: true },
+          Kind__c: { values: ['A'], restricted: false },
+        },
+      };
+      const test = generateApexTest(
+        formulaFlow(
+          'AND(ISPICKVAL({!$Record.Phase__c}, "PHASE II"), ISPICKVAL({!$Record.Stage__c}, "Rejected"), ISPICKVAL({!$Record.Kind__c}, "Z"))',
+        ),
+        { picklists },
+      );
+      expect(test.body).toContain("Phase__c = 'Phase II'");
+      expect(test.body).toContain('// TODO: entry criteria formula term: ISPICKVAL({!$Record.Stage__c}, "Rejected")');
+      expect(test.body).toContain("Kind__c = 'Z'");
     });
 
     it('never assigns a field the test cannot write', () => {

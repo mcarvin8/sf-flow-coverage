@@ -34,7 +34,16 @@ export type SolveContext = {
    * Without it, every field counts as writable.
    */
   writable?(object: string, field: string, when: 'insert' | 'update'): boolean;
+  /**
+   * The value to set for a field: a picklist value spelled as the picklist spells it (criteria
+   * compare text ignoring case), or `null` when the field can't hold the value (a restricted
+   * picklist without it). Without it, values are set as they are.
+   */
+  normalize?(object: string, field: string, apex: string): string | null;
 };
+
+const normalized = (ctx: SolveContext, object: string, field: string, apex: string): string | null =>
+  ctx.normalize ? ctx.normalize(object, field, apex) : apex;
 
 const canWrite = (ctx: SolveContext, object: string, field: string, when: 'insert' | 'update'): boolean =>
   ctx.writable?.(object, field, when) ?? true;
@@ -165,7 +174,9 @@ function recordSide(field: string, plan: CriteriaPlan, ctx: SolveContext): Side 
     values: ctx.fieldValues,
     alternates: ctx.changedValues,
     current: () => plan.set.get(field) ?? (ctx.context === 'insert' ? ctx.inserted[field] : undefined),
-    assign: (value) => {
+    assign: (raw) => {
+      const value = normalized(ctx, ctx.object, field, raw);
+      if (value === null) return false;
       const existing = plan.set.get(field);
       if (existing !== undefined) return existing === value;
       if (plan.keep.has(field)) return false;
@@ -193,7 +204,9 @@ function priorSide(field: string, plan: CriteriaPlan, ctx: SolveContext): Side {
     values: ctx.fieldValues,
     alternates: ctx.changedValues,
     current: () => plan.prior.get(field) ?? ctx.inserted[field],
-    assign: (value) => {
+    assign: (raw) => {
+      const value = normalized(ctx, ctx.object, field, raw);
+      if (value === null) return false;
       const existing = plan.prior.get(field) ?? ctx.inserted[field];
       if (existing !== undefined && !isNullish(existing)) return existing === value;
       if (!canWrite(ctx, ctx.object, field, 'insert')) return false;
@@ -215,7 +228,9 @@ function parentSide(object: string, field: string, plan: CriteriaPlan, ctx: Solv
     values,
     alternates: {},
     current: () => plan.parents.get(object)?.get(field),
-    assign: (value) => {
+    assign: (raw) => {
+      const value = normalized(ctx, object, field, raw);
+      if (value === null) return false;
       const existing = fields().get(field);
       if (existing !== undefined) return existing === value;
       if (!canWrite(ctx, object, field, 'insert')) return false;

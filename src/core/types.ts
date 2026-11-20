@@ -112,6 +112,8 @@ export type FlowMetadata = {
   filterFormula?: string;
   /** The Flow's elements, for working out what a test can assert. */
   graph?: FlowGraph;
+  /** Fields the Flow reads from each record variable, by variable name. */
+  recordReads?: Record<string, string[]>;
   variables: FlowVariable[];
 };
 

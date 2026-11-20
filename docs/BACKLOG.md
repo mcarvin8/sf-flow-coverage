@@ -47,6 +47,8 @@ Tests follow the Flow's elements and assert what it is certain to do: `$Record` 
 - Steer a test down a branch it would otherwise skip, so the Flow's other elements get covered (for example the branch that creates a Task when a crew is too small). Needs the solver to work backwards through formula resources.
 - Assert updates to related records.
 - Follow loops.
+- Meet the org's validation rules and lookup filters: read their formulas from the Tooling API and solve their opposite with the condition engine. In a large real org, these (with field-level security and approval processes) caused most generated-test failures.
+- Placeholder inputs for autolaunched Flows can still send a Flow into a loop (such as splitting a string on a placeholder delimiter) until it hits the CPU limit.
 
 ## CI and reporting
 

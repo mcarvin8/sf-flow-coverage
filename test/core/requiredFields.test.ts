@@ -9,6 +9,7 @@ import {
   type DescribeField,
   loadObjectFields,
   lookupTargets,
+  picklistInfo,
   requiredFieldValues,
   settableFieldValues,
   unsetFieldValues,
@@ -112,6 +113,7 @@ describe('loadObjectFields', () => {
       recordTypes: {},
       readOnlyFields: { Installation__c: [] },
       createOnlyFields: { Installation__c: [] },
+      picklists: { Installation__c: {} },
     });
   });
 
@@ -153,7 +155,7 @@ describe('lookupTargets', () => {
         field('Other__c', 'reference'),
         field('Name', 'string'),
       ]),
-    ).toEqual({ Account__c: 'Account', WhatId: 'Opportunity', OwnerId: 'User' });
+    ).toEqual({ Account__c: 'Account', WhatId: 'Opportunity', OwnerId: 'User', Setup__c: 'Profile' });
   });
 });
 
@@ -339,9 +341,12 @@ describe('generateApexTest with lookups', () => {
       },
     );
     expect(test.body).toContain('BusinessHoursId = [SELECT Id FROM BusinessHours WHERE IsDefault = true LIMIT 1].Id,');
-    expect(test.body).toContain(
-      "RecordTypeId = [SELECT Id FROM RecordType WHERE SobjectType = 'Job__c' AND IsActive = true LIMIT 1].Id",
+    expect(test.body).toContain('RecordTypeId = defaultRecordTypeId(Job__c.SObjectType)');
+    // The helper that reads the running user's default record type is added once.
+    expect(test.body.match(/private static Id defaultRecordTypeId\(Schema\.SObjectType objectType\) \{/g)).toHaveLength(
+      1,
     );
+    expect(test.body).toContain('if (info.isDefaultRecordTypeMapping()) return info.getRecordTypeId();');
     const noTypes = generateApexTest(
       recordFlow({ filters: [{ field: 'RecordTypeId', operator: 'IsNull', apexValue: 'false', rawValue: 'false' }] }),
       { lookups: { Job__c: { RecordTypeId: 'RecordType' } }, recordTypes: { Job__c: 1 } },
@@ -368,6 +373,47 @@ describe('generateApexTest with lookups', () => {
     );
     expect(test.body).toContain('insert accountParent;');
     expect(test.body).toContain('Account__c = accountParent.Id,');
+  });
+});
+
+describe('unique fields', () => {
+  it('get values no other record shares, and usernames look like email addresses', () => {
+    expect(apexValueForField(field('Code__c', 'string', { unique: true, length: 10 }))).toBe(
+      "('Test' + Math.abs(Crypto.getRandomInteger())).left(10)",
+    );
+    expect(apexValueForField(field('Key__c', 'string', { unique: true }))).toBe(
+      "('Test' + Math.abs(Crypto.getRandomInteger())).left(255)",
+    );
+    expect(apexValueForField(field('Username', 'string'))).toBe(
+      "'test' + Math.abs(Crypto.getRandomInteger()) + '@example.com.flowtest'",
+    );
+    expect(apexValueForField(field('Mail__c', 'email', { unique: true }))).toBe(
+      "'test' + Math.abs(Crypto.getRandomInteger()) + '@example.com.flowtest'",
+    );
+    expect(changedValueForField(field('Code__c', 'string', { unique: true, length: 10 }))).toBe(
+      "('Changed' + Math.abs(Crypto.getRandomInteger())).left(10)",
+    );
+    // Types without a safe unique value fall back to the usual one.
+    expect(apexValueForField(field('Number__c', 'double', { unique: true }))).toBe('1');
+    expect(changedValueForField(field('Number__c', 'double', { unique: true }))).toBe('2');
+  });
+});
+
+describe('picklistInfo', () => {
+  it('lists the active values of single-select picklists', () => {
+    expect(
+      picklistInfo([
+        field('Stage__c', 'picklist', {
+          restrictedPicklist: true,
+          picklistValues: [
+            { value: 'Open', active: true },
+            { value: 'Old', active: false },
+          ],
+        }),
+        field('Kind__c', 'picklist'),
+        field('Tags__c', 'multipicklist', { picklistValues: [{ value: 'A', active: true }] }),
+      ]),
+    ).toEqual({ Stage__c: { values: ['Open'], restricted: true }, Kind__c: { values: [], restricted: false } });
   });
 });
 
