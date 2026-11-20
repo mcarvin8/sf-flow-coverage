@@ -6,6 +6,7 @@
     "@oclif/core": "5.1.11",
     "@salesforce/core": "9.4.5",
     "@salesforce/sf-plugins-core": "13.0.9",
+    "@scolladon/tsgit": "6.0.0",
     "fast-xml-parser": "5.12.1"
   },
   "devDependencies": {
