@@ -15,6 +15,7 @@ type FlowDefinitionRecord = {
   NamespacePrefix?: string | null;
   ActiveVersionId?: string | null;
   LatestVersionId?: string | null;
+  LatestVersion?: { VersionNumber?: number | null } | null;
 };
 
 type FlowTestCoverageRecord = {
@@ -48,6 +49,19 @@ function chunk<T>(items: T[], size = CHUNK_SIZE): T[][] {
 const soqlList = (values: string[]): string =>
   values.map((v) => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ');
 
+/** Whether the version `getFlowCoverage` read is the one a deploy most likely produced. */
+function versionInfo(definition: FlowDefinitionRecord): Pick<FlowCoverage, 'versionState' | 'latestVersionNumber'> {
+  const { ActiveVersionId: active, LatestVersionId: latest } = definition;
+  if (!active) return { versionState: 'noActiveVersion' };
+  if (latest && idKey(latest) !== idKey(active)) {
+    return {
+      versionState: 'newerInactiveVersion',
+      latestVersionNumber: definition.LatestVersion?.VersionNumber ?? undefined,
+    };
+  }
+  return { versionState: 'current' };
+}
+
 /** Reads Flow coverage from FlowTestCoverage, which Salesforce fills in when Apex tests run in the org. */
 export class OrgCoverageSource implements CoverageSource {
   public constructor(private readonly query: ToolingQuery) {}
@@ -66,18 +80,24 @@ export class OrgCoverageSource implements CoverageSource {
     const definitions = await this.queryInChunks<FlowDefinitionRecord>(
       developerNames,
       (list) =>
-        `SELECT Id, DeveloperName, NamespacePrefix, ActiveVersionId, LatestVersionId FROM FlowDefinition WHERE DeveloperName IN (${list})`,
+        `SELECT Id, DeveloperName, NamespacePrefix, ActiveVersionId, LatestVersionId, LatestVersion.VersionNumber FROM FlowDefinition WHERE DeveloperName IN (${list})`,
     );
-    const versionIds = definitions
-      .filter((d) => wanted.has(qualifiedFlowName(d.DeveloperName, d.NamespacePrefix)))
-      .map((d) => d.ActiveVersionId ?? d.LatestVersionId)
-      .filter((id): id is string => !!id);
-    if (versionIds.length === 0) return [];
+    const definitionByVersion = new Map<string, FlowDefinitionRecord>();
+    for (const definition of definitions) {
+      if (!wanted.has(qualifiedFlowName(definition.DeveloperName, definition.NamespacePrefix))) continue;
+      const versionId = definition.ActiveVersionId ?? definition.LatestVersionId;
+      if (versionId) definitionByVersion.set(idKey(versionId), definition);
+    }
+    if (definitionByVersion.size === 0) return [];
     const flows = await this.queryInChunks<FlowRecord>(
-      versionIds,
+      [...definitionByVersion.values()].map((d) => (d.ActiveVersionId ?? d.LatestVersionId) as string),
       (list) => `SELECT ${FLOW_FIELDS} FROM Flow WHERE Id IN (${list})`,
     );
-    return this.buildCoverage(flows);
+    const coverage = await this.buildCoverage(flows);
+    return coverage.map((flow) => {
+      const definition = definitionByVersion.get(idKey(flow.flowVersionId));
+      return definition ? { ...flow, ...versionInfo(definition) } : flow;
+    });
   }
 
   private async queryInChunks<T extends Record<string, unknown>>(

@@ -100,6 +100,44 @@ describe('evaluateGate', () => {
     expect(result.flows[0]).toMatchObject({ status: 'fail', reason: 'Broken is not a Flow metadata file.' });
   });
 
+  it('fails Flows whose org versions suggest the branch was deployed inactive', async () => {
+    const source = fakeSource([
+      coverage('Current', { versionState: 'current' }),
+      coverage('NoActive', { versionState: 'noActiveVersion', versionNumber: 4, status: 'Draft' }),
+      coverage('Newer', { versionState: 'newerInactiveVersion', versionNumber: 2, latestVersionNumber: 3 }),
+      coverage('Unknown', {
+        versionState: 'newerInactiveVersion',
+        versionNumber: undefined,
+        status: undefined,
+      }),
+      coverage('UnknownNoActive', { versionState: 'noActiveVersion', versionNumber: undefined, status: undefined }),
+      coverage('Screen', { versionState: 'noActiveVersion', processType: 'Flow' }),
+    ]);
+    const result = await evaluateGate({
+      source,
+      candidates: ['Current', 'NoActive', 'Newer', 'Unknown', 'UnknownNoActive', 'Screen'].map((flowName) => ({
+        flowName,
+      })),
+    });
+    expect(result.passed).toBe(false);
+    expect(result.flows.map((f) => [f.flowName, f.status])).toEqual([
+      ['Current', 'pass'],
+      ['NoActive', 'fail'],
+      ['Newer', 'fail'],
+      ['Unknown', 'fail'],
+      ['UnknownNoActive', 'fail'],
+      ['Screen', 'skip'],
+    ]);
+    expect(result.flows[1].reason).toBe(
+      'No version of this Flow is active in the org (latest is version 4, Draft). Deploy it as active or activate it, run Apex tests, then rerun the gate.',
+    );
+    expect(result.flows[2].reason).toBe(
+      "The org's active version 2 is older than its latest version 3, which is inactive, so coverage may be stale. Activate the latest version, run Apex tests, then rerun the gate.",
+    );
+    expect(result.flows[3].reason).toContain('active version ? is older than its latest version ?');
+    expect(result.flows[4].reason).toContain('(latest is version ?, inactive)');
+  });
+
   it('reports an unknown version number', async () => {
     const source = fakeSource([coverage('X', { covered: false, versionNumber: undefined })]);
     const result = await evaluateGate({ source, candidates: [{ flowName: 'X' }] });

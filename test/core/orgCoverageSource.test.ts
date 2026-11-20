@@ -174,6 +174,55 @@ describe('OrgCoverageSource.getFlowCoverage', () => {
     expect(flows.map((f) => f.flowName)).toEqual(['Active_One', 'Inactive_One']);
   });
 
+  it('reports how the version read relates to the latest version', async () => {
+    const C = '301000000000003AAA';
+    const { query, calls } = fakeQuery({
+      FlowDefinition: [
+        { Id: 'D1', DeveloperName: 'Current', ActiveVersionId: A, LatestVersionId: A.slice(0, 15) },
+        {
+          Id: 'D2',
+          DeveloperName: 'Newer',
+          ActiveVersionId: B,
+          LatestVersionId: 'X01000000000009AAA',
+          LatestVersion: { VersionNumber: 5 },
+        },
+        { Id: 'D3', DeveloperName: 'NoActive', ActiveVersionId: null, LatestVersionId: C },
+        { Id: 'D4', DeveloperName: 'NoLatestNumber', ActiveVersionId: 'Y', LatestVersionId: 'Z', LatestVersion: null },
+      ],
+      Flow: [
+        flowRec(A, 'Current'),
+        flowRec(B, 'Newer'),
+        flowRec(C, 'NoActive', { Status: 'Draft' }),
+        flowRec('Y', 'NoLatestNumber'),
+      ],
+    });
+    const flows = await new OrgCoverageSource(query).getFlowCoverage([
+      'Current',
+      'Newer',
+      'NoActive',
+      'NoLatestNumber',
+    ]);
+    expect(calls[0]).toContain('LatestVersion.VersionNumber');
+    expect(flows.map((f) => [f.flowName, f.versionState, f.latestVersionNumber])).toEqual([
+      ['Current', 'current', undefined],
+      ['Newer', 'newerInactiveVersion', 5],
+      ['NoActive', 'noActiveVersion', undefined],
+      ['NoLatestNumber', 'newerInactiveVersion', undefined],
+    ]);
+  });
+
+  it('leaves versionState unset on a Flow the definitions do not account for', async () => {
+    const { query } = fakeQuery({
+      FlowDefinition: [{ Id: 'D1', DeveloperName: 'F', ActiveVersionId: A, LatestVersionId: A }],
+      Flow: [flowRec(A, 'F'), flowRec(B, 'Stray')],
+    });
+    const flows = await new OrgCoverageSource(query).getFlowCoverage(['F']);
+    expect(flows.map((f) => [f.flowName, f.versionState])).toEqual([
+      ['F', 'current'],
+      ['Stray', undefined],
+    ]);
+  });
+
   it('matches namespaced names', async () => {
     const { query, calls } = fakeQuery({
       FlowDefinition: [{ Id: 'D1', DeveloperName: 'Flow', NamespacePrefix: 'ns', ActiveVersionId: A }],

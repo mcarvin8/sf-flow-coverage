@@ -12,7 +12,7 @@ If no active Flow version in the org has any `FlowTestCoverage` rows, the tests 
 
 ### 2. Catch version mismatches in the gate
 
-The gate checks the org's active Flow version, which may not be the version in the pull request. If the branch wasn't deployed, or was deployed inactive, the gate passes on stale coverage. Compare the org version (for example its modified date, or a hash of its metadata) with the file at `--to`, and fail or warn when they differ.
+The gate checks the org's active Flow version, which may not be the version in the pull request. It already fails when the org has no active version or a newer inactive one (the branch was deployed inactive). It still passes on stale coverage when the branch wasn't deployed at all. Compare a fingerprint of the org version's `Metadata` (process type, start trigger, sorted element types and names) with the file at `--to`, and warn when they differ. Don't hash the whole file: the Tooling API's JSON and the source XML differ in defaults and ordering.
 
 ### 3. Show the deploy-as-active setting in readiness
 
