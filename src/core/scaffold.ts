@@ -5,7 +5,7 @@ import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js'
 import { isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
 import { findFlowFiles, readProjectConfig } from './projectFiles.js';
-import { type DescribeObject, loadRequiredFields, type RequiredFieldMap } from './requiredFields.js';
+import { type DescribeObject, loadObjectFields, type ObjectFields } from './requiredFields.js';
 import type { FlowMetadata, ScaffoldResult } from './types.js';
 
 export const DEFAULT_APEX_API_VERSION = '65.0';
@@ -77,15 +77,15 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     flows.push({ flowName, flow });
   }
 
-  const requiredFields: RequiredFieldMap = options.describe
-    ? await loadRequiredFields(
+  const objectFields: ObjectFields = options.describe
+    ? await loadObjectFields(
         flows.flatMap((f) => objectsToCreate(f.flow)),
         options.describe,
       )
-    : {};
+    : { requiredFields: {}, fieldValues: {} };
 
   for (const { flowName, flow } of flows) {
-    const test = generateApexTest(flow, { requiredFields });
+    const test = generateApexTest(flow, objectFields);
     const classPath = join(outputDir, `${test.className}.cls`);
     if (!options.force && (await exists(classPath))) {
       result.skipped.push({ flowName, reason: `${classPath} already exists. Use --force to overwrite.` });

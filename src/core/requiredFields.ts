@@ -78,9 +78,29 @@ export function requiredFieldValues(fields: DescribeField[]): Record<string, str
   return values;
 }
 
-/** Describes each object once and returns its required fields. Objects that can't be described are left out. */
-export async function loadRequiredFields(objects: string[], describe: DescribeObject): Promise<RequiredFieldMap> {
-  const map: RequiredFieldMap = {};
+/**
+ * A value for every field a test could set, used to meet `IsNull false` entry criteria.
+ * Lookups are left out: a made-up null Id can't satisfy "is not null".
+ */
+export function settableFieldValues(fields: DescribeField[]): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const field of fields) {
+    if (!field.createable || field.calculated || field.autoNumber || field.type === 'reference') continue;
+    const value = apexValueForField(field);
+    if (value !== undefined) values[field.name] = value;
+  }
+  return values;
+}
+
+export type ObjectFields = {
+  requiredFields: RequiredFieldMap;
+  fieldValues: RequiredFieldMap;
+};
+
+/** Describes each object once. Objects that can't be described are left out. */
+export async function loadObjectFields(objects: string[], describe: DescribeObject): Promise<ObjectFields> {
+  const requiredFields: RequiredFieldMap = {};
+  const fieldValues: RequiredFieldMap = {};
   for (const object of [...new Set(objects)]) {
     let fields: DescribeField[] | undefined;
     try {
@@ -88,7 +108,10 @@ export async function loadRequiredFields(objects: string[], describe: DescribeOb
     } catch {
       fields = undefined;
     }
-    if (fields) map[object] = requiredFieldValues(fields);
+    if (fields) {
+      requiredFields[object] = requiredFieldValues(fields);
+      fieldValues[object] = settableFieldValues(fields);
+    }
   }
-  return map;
+  return { requiredFields, fieldValues };
 }

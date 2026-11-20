@@ -88,9 +88,9 @@ The gate checks the Flow's active version in the org (or its latest version if n
 | Schedule-triggered | Starts the Flow directly, since Apex tests can't fire the schedule. |
 | Process Builder | A placeholder test to fill in. |
 
-With a target org (`--target-org` or your default org), the command describes each object the test creates and fills in its required fields: text, numbers, dates, and the default picklist value. Lookups it can't make up are left as TODOs. Without an org, only common standard objects (Account, Contact, Opportunity, and so on) get required fields.
+With a target org (`--target-org` or your default org), the command describes each object the test creates and fills in its required fields: text, numbers, dates, and the default picklist value. It also meets "is not null" entry criteria (`IsNull` `false`) by giving those fields a value. Lookups it can't make up are left as TODOs. Without an org, only common standard objects (Account, Contact, Opportunity, and so on) get required fields.
 
-Every generated test has TODOs for anything it couldn't fill in, entry criteria it couldn't set (formulas, cross-object fields), and real assertions. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`.
+Every generated test has TODOs for anything it couldn't fill in, entry criteria it couldn't set (formulas, cross-object fields, other operators), and real assertions. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`.
 
 ## CLI Command Reference
 
@@ -234,7 +234,8 @@ DESCRIPTION
   record-triggered Flows get a record built from the trigger object and entry criteria, autolaunched Flows are started
   with Flow.Interview and their input variables, and platform event Flows publish the event. When a target org is
   available (--target-org or a default org), the command describes each object the test creates and fills in its
-  required fields. The generated tests have TODOs for anything it can't fill in and placeholder assertions.
+  required fields and any fields the entry criteria require to be set (IsNull false). The generated tests have TODOs for
+  anything it can't fill in and placeholder assertions.
 
   Only Apex tests count toward deploying Flows as active, so this command generates Apex, not Flow Builder tests.
 

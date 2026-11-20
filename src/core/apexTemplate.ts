@@ -71,15 +71,39 @@ function isSimpleField(field: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(field);
 }
 
-/** Entry-criteria fields the generator can set directly (field EqualTo literal). */
-function settableCriteria(filters: FlowFilter[]): FlowFilter[] {
-  return filters.filter((f) => f.operator === 'EqualTo' && f.apexValue !== undefined && isSimpleField(f.field));
+type FieldAssignment = { field: string; apexValue: string };
+
+type ResolvedCriteria = {
+  /** Field values that satisfy the entry criteria. */
+  settable: FieldAssignment[];
+  /** Filters the settable values satisfy, so they get no TODO. */
+  handled: Set<FlowFilter>;
+};
+
+/**
+ * Entry-criteria filters the generator can satisfy: `EqualTo` a literal, and `IsNull false`
+ * when the org describe gives a value for the field.
+ */
+function resolveCriteria(filters: FlowFilter[], object: string, fieldValues: RequiredFieldMap): ResolvedCriteria {
+  const settable: FieldAssignment[] = [];
+  const handled = new Set<FlowFilter>();
+  for (const filter of filters) {
+    if (!isSimpleField(filter.field)) continue;
+    let apexValue: string | undefined;
+    if (filter.operator === 'EqualTo') apexValue = filter.apexValue;
+    else if (filter.operator === 'IsNull' && filter.rawValue === 'false')
+      apexValue = fieldValues[object]?.[filter.field];
+    if (apexValue === undefined) continue;
+    settable.push({ field: filter.field, apexValue });
+    handled.add(filter);
+  }
+  return { settable, handled };
 }
 
-function criteriaTodos(flow: FlowMetadata, settable: FlowFilter[]): string[] {
+function criteriaTodos(flow: FlowMetadata, handled: Set<FlowFilter>): string[] {
   const todos: string[] = [];
   for (const filter of flow.filters) {
-    if (settable.includes(filter)) continue;
+    if (handled.has(filter)) continue;
     const value = filter.rawValue === undefined ? '' : ` ${filter.rawValue}`;
     todos.push(`// TODO: entry criteria: ${filter.field} ${filter.operator}${value}`);
   }
@@ -95,9 +119,9 @@ function knownRequired(object: string, required: RequiredFieldMap): Record<strin
   return required[object] ?? REQUIRED_FIELDS[object];
 }
 
-function recordFields(object: string, criteria: FlowFilter[], required: RequiredFieldMap): string[] {
+function recordFields(object: string, criteria: FieldAssignment[], required: RequiredFieldMap): string[] {
   const fields = new Map<string, string>(Object.entries(knownRequired(object, required) ?? {}));
-  for (const filter of criteria) fields.set(filter.field, filter.apexValue as string);
+  for (const assignment of criteria) fields.set(assignment.field, assignment.apexValue);
   return [...fields].map(([field, value]) => `${field} = ${value}`);
 }
 
@@ -120,12 +144,12 @@ function newRecord(
   return lines;
 }
 
-function recordMethods(flow: FlowMetadata, required: RequiredFieldMap): string[] {
+function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, fieldValues: RequiredFieldMap): string[] {
   const object = flow.object as string;
   // A fixed name avoids Apex reserved words (`case`, `order`, `group`) that object names produce.
   const variable = 'testRecord';
-  const settable = settableCriteria(flow.filters);
-  const todos = criteriaTodos(flow, settable);
+  const { settable, handled } = resolveCriteria(flow.filters, object, fieldValues);
+  const todos = criteriaTodos(flow, handled);
   const i2 = INDENT.repeat(2);
   const requery = (assertion: string): string[] => [
     `${i2}${object} result = [SELECT Id FROM ${object} WHERE Id = :${variable}.Id];`,
@@ -157,7 +181,11 @@ function recordMethods(flow: FlowMetadata, required: RequiredFieldMap): string[]
       '',
       `${i2}Test.startTest();`,
     ];
-    for (const filter of settable) lines.push(`${i2}${variable}.${filter.field} = ${filter.apexValue};`);
+    const inserted = knownRequired(object, required) ?? {};
+    // Skip values the insert already set: assigning them again wouldn't change the record.
+    for (const { field, apexValue } of settable) {
+      if (inserted[field] !== apexValue) lines.push(`${i2}${variable}.${field} = ${apexValue};`);
+    }
     lines.push(...todos.map((t) => `${i2}${t}`));
     if (settable.length === 0 && todos.length === 0) lines.push(`${i2}// TODO: change the fields this Flow reacts to`);
     lines.push(`${i2}update ${variable};`, `${i2}Test.stopTest();`, '');
@@ -260,10 +288,10 @@ function interviewMethod(flow: FlowMetadata, name: string, notes: string[], requ
   return lines;
 }
 
-function platformEventMethod(flow: FlowMetadata, required: RequiredFieldMap): string[] {
+function platformEventMethod(flow: FlowMetadata, required: RequiredFieldMap, fieldValues: RequiredFieldMap): string[] {
   const event = flow.object as string;
   const i2 = INDENT.repeat(2);
-  const settable = settableCriteria(flow.filters);
+  const { settable, handled } = resolveCriteria(flow.filters, event, fieldValues);
   return [
     `${INDENT}@IsTest`,
     `${INDENT}static void runsFlowOnEvent() {`,
@@ -271,7 +299,7 @@ function platformEventMethod(flow: FlowMetadata, required: RequiredFieldMap): st
       (l) => !l.includes('TODO: set the required'),
     ),
     `${i2}// TODO: set the event fields this Flow reads`,
-    ...criteriaTodos(flow, settable).map((t) => `${i2}${t}`),
+    ...criteriaTodos(flow, handled).map((t) => `${i2}${t}`),
     '',
     `${i2}Test.startTest();`,
     `${i2}EventBus.publish(testEvent);`,
@@ -303,11 +331,14 @@ function processMethod(flow: FlowMetadata): string[] {
 export type GenerateOptions = {
   /** Required fields per object from an org describe. Falls back to a built-in list for common standard objects. */
   requiredFields?: RequiredFieldMap;
+  /** A value for every field the org describe can fill, per object. Used to meet `IsNull false` entry criteria. */
+  fieldValues?: RequiredFieldMap;
 };
 
 /** Generates a starter Apex test class for a Flow from its metadata. */
 export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = {}): GeneratedApexTest {
   const required = options.requiredFields ?? {};
+  const fieldValues = options.fieldValues ?? {};
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);
   let description: string;
@@ -316,11 +347,11 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
   switch (kind) {
     case 'record':
       description = `Record-triggered on ${flow.object} (${flow.recordTriggerType ?? 'Create'}, ${flow.triggerType}).`;
-      methods = recordMethods(flow, required);
+      methods = recordMethods(flow, required, fieldValues);
       break;
     case 'platformEvent':
       description = `Triggered by the platform event ${flow.object}.`;
-      methods = platformEventMethod(flow, required);
+      methods = platformEventMethod(flow, required, fieldValues);
       break;
     case 'scheduled':
       description = 'Schedule-triggered. Apex tests cannot fire the schedule, so this test starts the Flow directly.';
