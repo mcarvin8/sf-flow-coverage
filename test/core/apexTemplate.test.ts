@@ -66,11 +66,12 @@ describe('generateApexTest', () => {
     expect(test.body).toContain('// TODO: change the fields this Flow reacts to');
   });
 
-  it('deletes a record for a Delete Flow', async () => {
+  it('deletes a record for a Delete Flow, meeting its formula criteria', async () => {
     const test = generateApexTest(await fixture('Invoice_Before_Delete'));
     expect(test.body).toContain('delete testRecord;');
     expect(test.body).toContain('// TODO: set the required fields for Invoice__c');
-    expect(test.body).toContain('// TODO: entry criteria formula: {!$Record.Locked__c} = true');
+    expect(test.body).toContain('Locked__c = true');
+    expect(test.body).not.toContain('TODO: entry criteria');
     expect(test.body).toMatchSnapshot();
   });
 
@@ -216,6 +217,51 @@ describe('generateApexTest entry-criteria operators', () => {
     ]) {
       expect(test.body).toContain(`// TODO: entry criteria: ${todo}`);
     }
+  });
+
+  describe('formulas', () => {
+    const formulaFlow = (filterFormula: string, recordTriggerType = 'Create'): FlowMetadata => ({
+      ...recordFlow([], recordTriggerType),
+      filterFormula,
+    });
+
+    it('meets each term of an AND formula it can read, with describe values for ISBLANK', () => {
+      const test = generateApexTest(
+        formulaFlow(
+          `AND(
+  NOT(ISBLANK({!$Record.Crew_Size__c})),
+  ISPICKVAL({!$Record.Status__c}, "Planned"),
+  {!$Record.Hours__c} > 8
+)`,
+          'Update',
+        ),
+        { fieldValues: { Job__c: { Crew_Size__c: '1' } } },
+      );
+      expect(test.body).toContain('testRecord.Crew_Size__c = 1;');
+      expect(test.body).toContain("testRecord.Status__c = 'Planned';");
+      expect(test.body).toContain('testRecord.Hours__c = 9;');
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('leaves a TODO per term it cannot meet', () => {
+      const test = generateApexTest(
+        formulaFlow(`AND(
+  ISPICKVAL({!$Record.Status__c}, "Planned"),
+  NOT(ISBLANK({!$Record.Crew_Size__c})),
+  {!$Record.Account.Type}   =  "Partner"
+)`),
+      );
+      expect(test.body).toContain("Status__c = 'Planned'");
+      expect(test.body).toContain('// TODO: entry criteria formula term: NOT(ISBLANK({!$Record.Crew_Size__c}))');
+      expect(test.body).toContain('// TODO: entry criteria formula term: {!$Record.Account.Type} = "Partner"');
+      expect(test.body).not.toContain('TODO: entry criteria formula: ');
+    });
+
+    it('leaves other formulas as one TODO', () => {
+      const test = generateApexTest(formulaFlow('OR({!$Record.A__c}, {!$Record.B__c})', 'Delete'));
+      expect(test.body).toContain('delete testRecord;');
+      expect(test.body).toContain('// TODO: entry criteria formula: OR({!$Record.A__c}, {!$Record.B__c})');
+    });
   });
 
   describe('IsChanged', () => {

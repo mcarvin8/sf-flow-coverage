@@ -20,17 +20,13 @@ Read `FlowSettings` and report whether "Deploy processes and flows as active" is
 
 ## Scaffold: fewer TODOs
 
-### 4. Simple entry-criteria formulas
+### 4. More entry-criteria formulas
 
-Handle `AND(...)` of `ISPICKVAL(field, "value")`, `NOT(ISBLANK(field))`, and `field = literal`. Example from a real org:
+`AND(...)` of simple terms on `$Record` fields (`ISPICKVAL`, `ISBLANK`, `ISCHANGED`, comparisons with a literal, checkboxes) is handled. Still left as TODOs:
 
-```
-AND(
-  NOT(ISBLANK({!$Record.Crew_Size__c})),
-  NOT(ISBLANK({!$Record.Install_Date__c})),
-  ISPICKVAL({!$Record.Status__c}, "Planned")
-)
-```
+- `OR(...)` and `IF(...)`: meet one branch.
+- Cross-object fields (`{!$Record.Account.Type}`) and `$Record__Prior`.
+- Function calls such as `TODAY()` or `DATE(2026, 1, 31)` in comparisons.
 
 ### 5. More filter operators
 
