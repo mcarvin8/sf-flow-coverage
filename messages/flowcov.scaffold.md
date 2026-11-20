@@ -4,7 +4,7 @@ Generate starter Apex tests for Flows.
 
 # description
 
-Reads each Flow's metadata file from the project and writes an Apex test class named `<Flow>_FlowTest` that runs it: record-triggered Flows get a record built from the trigger object and entry criteria, autolaunched Flows are started with Flow.Interview and their input variables, and platform event Flows publish the event. When a target org is available (--target-org or a default org), the command describes each object the test creates and fills in its required fields. The generated tests have TODOs for anything it can't fill in and placeholder assertions.
+Reads each Flow's metadata file from the project and writes an Apex test class named `<Flow>_FlowTest` that runs it: record-triggered Flows get a record built from the trigger object and entry criteria, autolaunched Flows are started with Flow.Interview and their input variables, and platform event Flows publish the event. When a target org is available (--target-org or a default org), the command describes each object the test creates and fills in its required fields and any fields the entry criteria require to be set (IsNull false). The generated tests have TODOs for anything it can't fill in and placeholder assertions.
 
 Only Apex tests count toward deploying Flows as active, so this command generates Apex, not Flow Builder tests.
 
