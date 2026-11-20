@@ -73,7 +73,7 @@ Support a `.flowcovignore` file or `--exclude` flag for legacy Flows a team has 
 
 ### 12. List uncovered elements
 
-Compare the Flow XML's elements with `FlowElementTestCoverage` and list the elements no test ran, in `readiness` and in `gate` failures.
+Done: `readiness` and `gate` list the elements no test ran, compared with the org version's content. `transform` (#8) builds on the same element coverage.
 
 ### 13. Process Builder notice
 

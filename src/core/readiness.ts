@@ -1,3 +1,4 @@
+import { findUncoveredElements } from './elementCoverage.js';
 import { DEFAULT_THRESHOLD } from './flowTypes.js';
 import type { CoverageSource, ReadinessFlow, ReadinessResult } from './types.js';
 
@@ -16,15 +17,21 @@ export async function buildReadinessReport(options: ReadinessOptions): Promise<R
   const threshold = options.threshold ?? DEFAULT_THRESHOLD;
   const coverage = await options.source.listActiveCountedFlows();
 
-  const flows: ReadinessFlow[] = coverage.map((c) => ({
-    flowName: c.flowName,
-    processType: c.processType,
-    versionNumber: c.versionNumber,
-    covered: c.covered,
-    elementCoveragePercent: c.elementCoveragePercent,
-    tests: c.tests,
-    changes: options.churn ? (options.churn.get(c.flowName) ?? 0) : undefined,
-  }));
+  const flows: ReadinessFlow[] = [];
+  for (const c of coverage) {
+    // Sequential on purpose: one Tooling API query per partly covered Flow.
+    const uncoveredElements = await findUncoveredElements(options.source, c);
+    flows.push({
+      flowName: c.flowName,
+      processType: c.processType,
+      versionNumber: c.versionNumber,
+      covered: c.covered,
+      elementCoveragePercent: c.elementCoveragePercent,
+      tests: c.tests,
+      changes: options.churn ? (options.churn.get(c.flowName) ?? 0) : undefined,
+      ...(uncoveredElements ? { uncoveredElements } : {}),
+    });
+  }
 
   flows.sort(
     (a, b) =>

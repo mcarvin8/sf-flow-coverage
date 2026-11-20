@@ -1,3 +1,4 @@
+import { describeElements, findUncoveredElements } from './elementCoverage.js';
 import { compareFingerprints, type FlowFingerprint, fingerprintFromXml } from './flowFingerprint.js';
 import { flowNameFromPath, isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
@@ -149,6 +150,13 @@ export async function evaluateGate(options: GateOptions): Promise<GateResult> {
       });
     } else {
       const result: GateFlowResult = { ...details, ...coverageOutcome(flow, minElementCoverage) };
+      const uncovered = await findUncoveredElements(options.source, flow);
+      if (uncovered) {
+        result.uncoveredElements = uncovered;
+        if (result.status === 'fail' && uncovered.length > 0) {
+          result.reason = `${result.reason} Not run by any test: ${describeElements(uncovered)}.`;
+        }
+      }
       const mismatch = contentCheck === 'off' ? undefined : await contentMismatch(options.source, candidate, flow);
       if (mismatch && contentCheck === 'fail' && result.status === 'pass') {
         result.status = 'fail';

@@ -49,6 +49,20 @@ const ELEMENT_TYPES = [
   'waits',
 ] as const;
 
+/** Resources, which Salesforce leaves out of a Flow's element coverage. */
+const RESOURCE_TYPES = new Set(['choices', 'constants', 'dynamicChoiceSets', 'formulas', 'textTemplates', 'variables']);
+
+/**
+ * The elements Salesforce counts for element coverage: every element but the start and
+ * resources. Types are singular (`decision`, `recordUpdate`).
+ */
+export function executableElements(fingerprint: FlowFingerprint): Array<{ name: string; type: string }> {
+  return fingerprint.elements.flatMap((element) => {
+    const [type, name] = element.split(':');
+    return RESOURCE_TYPES.has(type) ? [] : [{ name, type: type.replace(/s$/, '') }];
+  });
+}
+
 const FILTER_VALUE_KEYS = [
   'stringValue',
   'booleanValue',

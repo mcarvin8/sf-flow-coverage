@@ -79,6 +79,23 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
       expect(process.exitCode).toBe(1);
     });
 
+    it('lists the elements no test ran for partly covered Flows', async () => {
+      const partial = coverage('Partial', { elementsCovered: 1, elementsTotal: 2, coveredElementNames: ['check'] });
+      orgFlows.value = [partial, coverage('Full', { elementsCovered: 5, elementsTotal: 5 })];
+      orgFingerprints.value = {
+        [partial.flowVersionId]: { filters: [], elements: ['decisions:Check', 'recordUpdates:Save'] },
+      };
+      const result = await FlowcovReadiness.run(['--target-org', testOrg.username]);
+      orgFingerprints.value = {};
+      expect(result.flows.find((f) => f.flowName === 'Partial')?.uncoveredElements).toEqual([
+        { name: 'Save', type: 'recordUpdate' },
+      ]);
+      expect(tableRows().map((row) => [row.Flow, row['Uncovered Elements']])).toEqual([
+        ['Full', ''],
+        ['Partial', 'Save (recordUpdate)'],
+      ]);
+    });
+
     it('reports a ready org with git change counts', async () => {
       const repo = new TempGitRepo();
       try {

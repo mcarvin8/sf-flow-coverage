@@ -1,6 +1,6 @@
 import { Messages } from '@salesforce/core';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
-
+import { describeElements } from '../../core/elementCoverage.js';
 import { DEFAULT_THRESHOLD } from '../../core/flowTypes.js';
 import { getFlowChurn } from '../../core/git.js';
 import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
@@ -83,12 +83,14 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
     }
 
     const covered = result.flows.filter((f) => f.covered);
+    const showUncovered = covered.some((f) => (f.uncoveredElements?.length ?? 0) > 0);
     if (covered.length > 0) {
       this.table({
         title: 'Covered Flows',
         data: covered.map((f) => ({
           Flow: f.flowName,
           'Element Coverage': `${f.elementCoveragePercent}%`,
+          ...(showUncovered ? { 'Uncovered Elements': describeElements(f.uncoveredElements ?? []) } : {}),
           Tests: [...new Set(f.tests.map((t) => `${t.className}.${t.methodName}`))].join(', '),
         })),
       });

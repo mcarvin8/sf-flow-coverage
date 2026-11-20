@@ -1,6 +1,14 @@
 import type { FlowFingerprint } from './flowFingerprint.js';
 import type { FlowGraph } from './flowGraph.js';
 
+/** A Flow element no Apex test ran. */
+export type UncoveredElement = {
+  /** Element API name, as in the Flow's metadata. */
+  name: string;
+  /** Element type, such as `decision` or `recordUpdate`. */
+  type: string;
+};
+
 /** One Apex test method that ran a Flow version. */
 export type FlowTestRef = {
   className: string;
@@ -22,6 +30,11 @@ export type FlowCoverage = {
   /** Elements covered across all tests, 0-100. */
   elementCoveragePercent: number;
   tests: FlowTestRef[];
+  /**
+   * Lowercased names of the elements any test ran (FlowElementTestCoverage reports them in lower
+   * case). Undefined when element coverage can't be read.
+   */
+  coveredElementNames?: string[];
   /**
    * How this version relates to the Flow's other versions, when known (set by `getFlowCoverage`):
    * - `current`: it is the active version and the latest one.
@@ -108,6 +121,8 @@ export type ReadinessFlow = {
   tests: FlowTestRef[];
   /** Commits that touched the Flow's source file, when the project is a git repo. */
   changes?: number;
+  /** Elements no test ran, for Flows some test runs. Undefined when they can't be read. */
+  uncoveredElements?: UncoveredElement[];
 };
 
 export type ReadinessResult = {
@@ -135,6 +150,8 @@ export type GateFlowResult = {
   tests: FlowTestRef[];
   /** Problems that don't change `status`, such as an org version that differs from source. */
   warnings?: string[];
+  /** Elements no test ran, for Flows some test runs. Undefined when they can't be read. */
+  uncoveredElements?: UncoveredElement[];
 };
 
 /** What the gate does when the org's Flow content differs from source. */
