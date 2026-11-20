@@ -108,6 +108,7 @@ describe('loadObjectFields', () => {
       changedValues: { Installation__c: { Crew_Size__c: '2' } },
       lookups: { Installation__c: {} },
       nullWhenUnset: { Installation__c: [] },
+      relationships: { Installation__c: {} },
     });
   });
 
@@ -369,8 +370,8 @@ describe('generateApexTest with IsNull false criteria', () => {
     expect(test.body).not.toContain('TODO: entry criteria: Crew_Size__c');
     expect(test.body).not.toContain('TODO: entry criteria: Panels_Required__c');
     expect(test.body).toContain('// TODO: entry criteria: Account__c IsNull false');
-    expect(test.body).toContain('// TODO: entry criteria: Signed_Off_By__c IsNull true');
-    expect(test.body).not.toContain("Signed_Off_By__c = 'Test'");
+    // IsNull true is met by leaving the field empty.
+    expect(test.body).not.toContain('Signed_Off_By__c');
   });
 
   it('fills the fields in the update so they change', () => {

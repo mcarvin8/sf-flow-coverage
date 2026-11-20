@@ -12,6 +12,8 @@ export type DescribeField = {
   length?: number;
   picklistValues?: Array<{ value: string; active: boolean; defaultValue?: boolean }> | null;
   referenceTo?: string[] | null;
+  /** For lookups, the relationship name used in paths such as `Account__r.Type`. */
+  relationshipName?: string | null;
 };
 
 /** Describes an sObject's fields. Returns undefined when the object can't be described. */
@@ -150,6 +152,8 @@ export type ObjectFields = {
   changedValues: RequiredFieldMap;
   /** The object each lookup field points to, per object. Only lookups to a single object are listed. */
   lookups: Record<string, Record<string, string>>;
+  /** Lookup field per relationship name (`Account__r` to `Account__c`), per object. */
+  relationships: Record<string, Record<string, string>>;
   /** Fields that stay empty when a test doesn't set them (no default value), per object. */
   nullWhenUnset: Record<string, string[]>;
 };
@@ -159,6 +163,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   fieldValues: {},
   changedValues: {},
   lookups: {},
+  relationships: {},
   nullWhenUnset: {},
 });
 
@@ -202,6 +207,15 @@ export function nullWhenUnsetFields(fields: DescribeField[]): string[] {
 }
 
 /** Createable lookups to exactly one object (polymorphic lookups like `WhatId` are left out). */
+/** Lookup field per relationship name, for criteria on related records. */
+export function relationshipLookups(fields: DescribeField[]): Record<string, string> {
+  const relationships: Record<string, string> = {};
+  for (const field of fields) {
+    if (field.type === 'reference' && field.relationshipName) relationships[field.relationshipName] = field.name;
+  }
+  return relationships;
+}
+
 export function lookupTargets(fields: DescribeField[]): Record<string, string> {
   const targets: Record<string, string> = {};
   for (const field of fields) {
@@ -233,6 +247,7 @@ export async function loadObjectFields(
       into.fieldValues[object] = settableFieldValues(fields);
       into.changedValues[object] = changedFieldValues(fields);
       into.lookups[object] = lookupTargets(fields);
+      into.relationships[object] = relationshipLookups(fields);
       into.nullWhenUnset[object] = nullWhenUnsetFields(fields);
     }
   }

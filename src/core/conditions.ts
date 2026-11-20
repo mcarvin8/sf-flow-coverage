@@ -1,6 +1,6 @@
 import type { FlowValue } from './flowValues.js';
 import { type Expr, formulaToApex, parseFormula } from './formula.js';
-import type { FlowFilter } from './types.js';
+import type { FlowFilter, FlowMetadata } from './types.js';
 
 /** One side of a condition. */
 export type Operand =
@@ -286,6 +286,29 @@ export function conditionFromFormula(formula: string): Condition {
   const condition = formulaCondition(expr, 'entry criteria formula term');
   // A whole formula the reader can't use reads as the formula, not as one of its terms.
   return condition.kind === 'opaque' ? { ...condition, label: 'entry criteria formula' } : condition;
+}
+
+/** A Flow's whole entry criteria: its start filters (with their logic) and its filter formula. */
+export function entryCondition(flow: Pick<FlowMetadata, 'filters' | 'filterLogic' | 'filterFormula'>): Condition {
+  const parts: Condition[] = [];
+  if (flow.filters.length > 0) parts.push(conditionFromFilters(flow.filters, flow.filterLogic));
+  if (flow.filterFormula) parts.push(conditionFromFormula(flow.filterFormula));
+  return parts.length === 1 ? parts[0] : { kind: 'and', items: parts };
+}
+
+/** The record field paths a condition reads, such as `['Status__c']` or `['Account__r', 'Type']`. */
+export function fieldPaths(condition: Condition): string[][] {
+  switch (condition.kind) {
+    case 'and':
+    case 'or':
+      return condition.items.flatMap(fieldPaths);
+    case 'not':
+      return fieldPaths(condition.item);
+    case 'opaque':
+      return [];
+    default:
+      return [condition.left, condition.right].flatMap((operand) => (operand?.kind === 'field' ? [operand.path] : []));
+  }
 }
 
 const NEGATED: Partial<Record<ConditionOperator, ConditionOperator>> = {

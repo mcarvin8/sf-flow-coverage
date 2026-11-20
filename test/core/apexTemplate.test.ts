@@ -47,11 +47,11 @@ describe('generateApexTest', () => {
     expect(test.body).toMatchSnapshot();
   });
 
-  it('updates a record for an Update Flow and leaves cross-object criteria as TODOs', async () => {
+  it('updates a record for an Update Flow, meeting custom filter logic through one branch', async () => {
     const test = generateApexTest(await fixture('Case_Update'));
+    // 1 OR (2 AND 3): the first filter alone meets it, so the cross-object filter isn't needed.
     expect(test.body).toContain('testRecord.IsEscalated = true;');
-    expect(test.body).toContain('// TODO: entry criteria: Account.Name EqualTo Acme');
-    expect(test.body).toContain('// TODO: entry criteria logic: 1 OR (2 AND 3)');
+    expect(test.body).not.toContain('TODO: entry criteria');
     expect(test.body).not.toContain('runsFlowOnCreate');
     expect(test.body).toMatchSnapshot();
   });
@@ -79,7 +79,7 @@ describe('generateApexTest', () => {
     const test = generateApexTest(await fixture('Opportunity_Create'));
     expect(test.body).toContain("CloseDate = Date.valueOf('2026-12-31')");
     expect(test.body).toContain('Probability = 50');
-    expect(test.body).toContain('// TODO: entry criteria: OwnerId EqualTo $User.Id');
+    expect(test.body).toContain('OwnerId = UserInfo.getUserId()');
     expect(test.body).toContain('// TODO: entry criteria: Description IsNull');
     expect(test.body).toMatchSnapshot();
   });
@@ -415,10 +415,58 @@ describe('generateApexTest entry-criteria operators', () => {
       expect(test.body).not.toContain('TODO: entry criteria formula: ');
     });
 
-    it('leaves other formulas as one TODO', () => {
-      const test = generateApexTest(formulaFlow('OR({!$Record.A__c}, {!$Record.B__c})', 'Delete'));
+    it('meets criteria on a related record by setting fields on the parent it inserts', () => {
+      const test = generateApexTest(formulaFlow('ISPICKVAL({!$Record.Account__r.Type}, "Partner")'), {
+        requiredFields: { Job__c: { Account__c: 'null /* TODO */' }, Account: { Name: "'Test'" } },
+        lookups: { Job__c: { Account__c: 'Account' } },
+        relationships: { Job__c: { Account__r: 'Account__c' } },
+      });
+      expect(test.body).toContain(
+        [
+          '        Account accountParent = new Account(',
+          "            Name = 'Test',",
+          "            Type = 'Partner'",
+          '        );',
+          '        insert accountParent;',
+          '',
+          '        Job__c testRecord = new Job__c(',
+          '            Account__c = accountParent.Id',
+        ].join('\n'),
+      );
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('sets prior values in the insert and the new values in the update', () => {
+      const test = generateApexTest(
+        formulaFlow(
+          'AND(ISPICKVAL({!$Record.Stage__c}, "Done"), ISPICKVAL(PRIORVALUE({!$Record.Stage__c}), "Open"))',
+          'Update',
+        ),
+      );
+      expect(test.body).toContain("        Job__c testRecord = new Job__c(\n            Stage__c = 'Open'\n        );");
+      expect(test.body).toContain("testRecord.Stage__c = 'Done';");
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('meets NotEqualTo, field-to-field comparisons, and date functions', () => {
+      const test = generateApexTest(
+        formulaFlow(
+          'AND({!$Record.Kind__c} <> "Draft", {!$Record.Hours__c} > {!$Record.Cap__c}, {!$Record.Due__c} < TODAY())',
+        ),
+        { fieldValues: { Job__c: { Kind__c: "'Final'", Cap__c: '4' } } },
+      );
+      expect(test.body).toContain("Kind__c = 'Final',");
+      expect(test.body).toContain('Cap__c = 4,');
+      expect(test.body).toContain('Hours__c = 5,');
+      expect(test.body).toContain('Due__c = Date.today().addDays(-1)');
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('meets an OR formula through one branch, and leaves a formula it cannot read as one TODO', () => {
+      expect(generateApexTest(formulaFlow('OR({!$Record.A__c}, {!$Record.B__c})')).body).toContain('A__c = true');
+      const test = generateApexTest(formulaFlow('OR({!$Record.A__c} ~ 1)', 'Delete'));
       expect(test.body).toContain('delete testRecord;');
-      expect(test.body).toContain('// TODO: entry criteria formula: OR({!$Record.A__c}, {!$Record.B__c})');
+      expect(test.body).toContain('// TODO: entry criteria formula: OR({!$Record.A__c} ~ 1)');
     });
   });
 

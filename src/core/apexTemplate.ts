@@ -1,9 +1,10 @@
-import { parseFilterFormula } from './filterFormula.js';
+import { entryCondition } from './conditions.js';
+import { type CriteriaPlan, solveCriteria } from './criteria.js';
 import { type FieldState, type FieldWrite, type FlowWalk, walkFlow } from './flowGraph.js';
 import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './flowTypes.js';
 import { escapeApexString } from './flowXml.js';
 import { canInsertParent, EXISTING_RECORD_IDS, type RequiredFieldMap } from './requiredFields.js';
-import type { FlowFilter, FlowMetadata, FlowVariable } from './types.js';
+import type { FlowMetadata, FlowVariable } from './types.js';
 
 const MAX_CLASS_NAME = 40;
 const CLASS_SUFFIX = '_FlowTest';
@@ -70,134 +71,49 @@ function header(flow: FlowMetadata, description: string): string[] {
   ];
 }
 
-function isSimpleField(field: string): boolean {
-  return /^[A-Za-z][A-Za-z0-9_]*$/.test(field);
-}
-
-type FieldAssignment = { field: string; apexValue: string };
-
-type ResolvedCriteria = {
-  /** Field values that satisfy the entry criteria. */
-  settable: FieldAssignment[];
-  /** Filters the settable values satisfy, so they get no TODO. */
-  handled: Set<FlowFilter>;
-};
-
-/** Field values from the org describe that the criteria resolver can draw on. */
+/** Field values from the org describe that the criteria solver can draw on. */
 type CriteriaValues = {
-  /** A value per settable field, for `IsNull false`. */
+  /** A value per settable field, including lookup Ids. */
   fieldValues: RequiredFieldMap;
   /** A value per field that differs from the insert value, for `IsChanged true`. */
   changedValues: RequiredFieldMap;
   /** Fields that stay empty when the test doesn't set them, for following the Flow's decisions. */
   nullWhenUnset: Record<string, string[]>;
+  /** Lookup field per relationship name, per object. */
+  relationships: Record<string, Record<string, string>>;
+  /** The object each lookup field points to, per object. */
+  lookups: Record<string, Record<string, string>>;
+  /** Fields the criteria need on parent records, per parent object; filled while generating. */
+  parentFields: Map<string, Map<string, string>>;
 };
 
-/** Whether the test inserts the record (create, delete, platform event) or updates it after inserting. */
-type CriteriaContext = 'insert' | 'update';
-
-const BOUND_STEPS: Record<string, number> = {
-  GreaterThan: 1,
-  GreaterThanOrEqualTo: 0,
-  LessThan: -1,
-  LessThanOrEqualTo: 0,
-};
-
-const NUMBER = /^-?\d+(\.\d+)?$/;
-const DATE = 'Date.valueOf(';
-const DATETIME = 'Datetime.valueOfGmt(';
-
-/** A value past (or at) a comparison bound: numbers step by 1, dates by a day, datetimes by a second. */
-function boundValue(apexValue: string | undefined, step: number): string | undefined {
-  if (apexValue === undefined) return undefined;
-  if (NUMBER.test(apexValue)) return String(Number((Number(apexValue) + step).toFixed(10)));
-  if (!apexValue.startsWith(DATE) && !apexValue.startsWith(DATETIME)) return undefined;
-  if (step === 0) return apexValue;
-  return apexValue.startsWith(DATE) ? `${apexValue}.addDays(${step})` : `${apexValue}.addSeconds(${step})`;
-}
-
-/** A value that meets one filter on its own, or undefined when the generator can't make one. */
-function filterValue(filter: FlowFilter, object: string, values: CriteriaValues): string | undefined {
-  const { operator, apexValue } = filter;
-  if (operator === 'EqualTo') return apexValue;
-  if (operator === 'IsNull' && filter.rawValue === 'false') return values.fieldValues[object]?.[filter.field];
-  if (operator in BOUND_STEPS) return boundValue(apexValue, BOUND_STEPS[operator]);
-  // A string contains, starts with, and ends with itself.
-  if (['Contains', 'StartsWith', 'EndsWith'].includes(operator) && apexValue?.startsWith("'")) return apexValue;
-  return undefined;
-}
-
-/**
- * Entry-criteria filters the generator can satisfy: `EqualTo`, comparisons, and string matches
- * against a literal; `IsNull false` when the org describe gives a value for the field; and, in
- * an update, `IsChanged true` when the describe gives a second value (or another filter already
- * sets the field) and `IsChanged false` when no other filter sets the field.
- */
-function resolveCriteria(
-  filters: FlowFilter[],
+/** Plans field values that meet the Flow's entry criteria for an insert or an update test. */
+function planCriteria(
+  flow: FlowMetadata,
   object: string,
   values: CriteriaValues,
-  context: CriteriaContext,
-): ResolvedCriteria {
-  const settable: FieldAssignment[] = [];
-  const handled = new Set<FlowFilter>();
-  const changed: FlowFilter[] = [];
-  for (const filter of filters) {
-    if (!isSimpleField(filter.field)) continue;
-    if (filter.operator === 'IsChanged') {
-      if (context === 'update') changed.push(filter);
-      continue;
-    }
-    const apexValue = filterValue(filter, object, values);
-    if (apexValue === undefined) continue;
-    settable.push({ field: filter.field, apexValue });
-    handled.add(filter);
+  required: RequiredFieldMap,
+  context: 'insert' | 'update',
+): CriteriaPlan {
+  const plan = solveCriteria(entryCondition(flow), {
+    object,
+    context,
+    inserted: knownRequired(object, required) ?? {},
+    fieldValues: values.fieldValues[object] ?? {},
+    changedValues: values.changedValues[object] ?? {},
+    relationships: values.relationships[object] ?? {},
+    lookups: values.lookups[object] ?? {},
+    parentFieldValues: (parent) => values.fieldValues[parent] ?? {},
+  });
+  for (const [parent, fields] of plan.parents) {
+    const known = values.parentFields.get(parent) ?? new Map<string, string>();
+    for (const [field, value] of fields) if (!known.has(field)) known.set(field, value);
+    values.parentFields.set(parent, known);
   }
-  // After the other filters, so a field they already set in the update counts as changed.
-  for (const filter of changed) {
-    const alreadySet = settable.some((s) => s.field === filter.field);
-    if (filter.rawValue !== 'true') {
-      // `IsChanged false` holds as long as nothing else sets the field.
-      if (filter.rawValue === 'false' && !alreadySet) handled.add(filter);
-      continue;
-    }
-    if (!alreadySet) {
-      const apexValue = values.changedValues[object]?.[filter.field];
-      if (apexValue === undefined) continue;
-      settable.push({ field: filter.field, apexValue });
-    }
-    handled.add(filter);
-  }
-  return { settable, handled };
+  return plan;
 }
 
-function criteriaTodos(flow: FlowMetadata, handled: Set<FlowFilter>): string[] {
-  const todos: string[] = [];
-  for (const filter of flow.filters) {
-    if (handled.has(filter)) continue;
-    if (filter.formulaTerm !== undefined) {
-      todos.push(`// TODO: entry criteria formula term: ${filter.formulaTerm.replace(/\s+/g, ' ')}`);
-      continue;
-    }
-    const value = filter.rawValue === undefined ? '' : ` ${filter.rawValue}`;
-    todos.push(`// TODO: entry criteria: ${filter.field} ${filter.operator}${value}`);
-  }
-  if (flow.filterFormula) todos.push(`// TODO: entry criteria formula: ${flow.filterFormula.replace(/\s+/g, ' ')}`);
-  if (flow.filterLogic && !['and', 'or'].includes(flow.filterLogic.toLowerCase())) {
-    todos.push(`// TODO: entry criteria logic: ${flow.filterLogic}`);
-  }
-  return todos;
-}
-
-/**
- * Reads a simple entry-criteria formula into filters the generator can meet, so only the terms
- * it can't read stay TODOs. Other formulas stay a single TODO.
- */
-function withFormulaFilters(flow: FlowMetadata): FlowMetadata {
-  const filters = flow.filterFormula ? parseFilterFormula(flow.filterFormula) : undefined;
-  if (!filters) return flow;
-  return { ...flow, filters: [...flow.filters, ...filters], filterFormula: undefined };
-}
+const criteriaTodos = (plan: CriteriaPlan): string[] => plan.unmet.map((u) => `// TODO: ${u.label}: ${u.text}`);
 
 /** Described required fields win over the built-in list for standard objects. */
 function knownRequired(object: string, required: RequiredFieldMap): Record<string, string> | undefined {
@@ -206,15 +122,15 @@ function knownRequired(object: string, required: RequiredFieldMap): Record<strin
 
 function recordFieldValues(
   object: string,
-  criteria: FieldAssignment[],
+  criteria: Map<string, string>,
   required: RequiredFieldMap,
 ): Map<string, string> {
   const fields = new Map<string, string>(Object.entries(knownRequired(object, required) ?? {}));
-  for (const assignment of criteria) fields.set(assignment.field, assignment.apexValue);
+  for (const [field, value] of criteria) fields.set(field, value);
   return fields;
 }
 
-function recordFields(object: string, criteria: FieldAssignment[], required: RequiredFieldMap): string[] {
+function recordFields(object: string, criteria: Map<string, string>, required: RequiredFieldMap): string[] {
   return [...recordFieldValues(object, criteria, required)].map(([field, value]) => `${field} = ${value}`);
 }
 
@@ -348,8 +264,8 @@ function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, values: C
   const object = flow.object as string;
   // A fixed name avoids Apex reserved words (`case`, `order`, `group`) that object names produce.
   const variable = 'testRecord';
-  const { settable, handled } = resolveCriteria(flow.filters, object, values, 'insert');
-  const todos = criteriaTodos(flow, handled);
+  const plan = planCriteria(flow, object, values, required, 'insert');
+  const todos = criteriaTodos(plan);
   const i2 = INDENT.repeat(2);
   const nullWhenUnset = values.nullWhenUnset[object] ?? [];
   const method = (name: string, body: string[]): string[] => [
@@ -371,12 +287,12 @@ function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, values: C
     criteriaMet && flow.graph ? flowChecks(walkFlow(flow.graph, state), object, variable, dml, i2) : undefined;
 
   const createBody = (): string[] => {
-    const fields = recordFieldValues(object, settable, required);
+    const fields = recordFieldValues(object, plan.set, required);
     const checks =
       checksFor(todos.length === 0, fieldState(fields, nullWhenUnset), 'insert') ??
       defaultChecks('insert', `Assert.isNotNull(result.Id, 'The ${object} should be saved');`);
     return [
-      ...newRecord(object, variable, recordFields(object, settable, required), i2, required),
+      ...newRecord(object, variable, recordFields(object, plan.set, required), i2, required),
       ...todos.map((t) => `${i2}${t}`),
       '',
       ...checks.dml,
@@ -385,27 +301,28 @@ function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, values: C
   };
 
   const updateBody = (): string[] => {
-    const update = resolveCriteria(flow.filters, object, values, 'update');
-    const updateTodos = criteriaTodos(flow, update.handled);
+    const update = planCriteria(flow, object, values, required, 'update');
+    const updateTodos = criteriaTodos(update);
+    // The insert sets what `$Record__Prior` conditions need; the update sets the rest.
+    const inserted = recordFieldValues(object, update.prior, required);
     const lines = [
-      ...newRecord(object, variable, recordFields(object, [], required), i2, required),
+      ...newRecord(object, variable, recordFields(object, update.prior, required), i2, required),
       `${i2}insert ${variable};`,
       '',
     ];
-    const inserted = knownRequired(object, required) ?? {};
-    const fields = recordFieldValues(object, [], required);
+    const fields = new Map(inserted);
     const changes: string[] = [];
     // Skip values the insert already set: assigning them again wouldn't change the record.
-    for (const { field, apexValue } of update.settable) {
-      fields.set(field, apexValue);
-      if (inserted[field] !== apexValue) changes.push(`${i2}${variable}.${field} = ${apexValue};`);
+    for (const [field, value] of update.set) {
+      fields.set(field, value);
+      if (inserted.get(field) !== value) changes.push(`${i2}${variable}.${field} = ${value};`);
     }
     changes.push(...updateTodos.map((t) => `${i2}${t}`));
-    if (update.settable.length === 0 && updateTodos.length === 0)
+    if (update.set.size === 0 && updateTodos.length === 0)
       changes.push(`${i2}// TODO: change the fields this Flow reacts to`);
     // When the Flow also runs on create, the insert may already have set the fields it writes.
     const unknown = flow.recordTriggerType === 'CreateAndUpdate' ? fieldsTheFlowWrites(flow) : new Set<string>();
-    const changesField = update.settable.some(({ field, apexValue }) => inserted[field] !== apexValue);
+    const changesField = [...update.set].some(([field, value]) => inserted.get(field) !== value);
     const checks =
       checksFor(updateTodos.length === 0 && changesField, fieldState(fields, nullWhenUnset, unknown), 'update') ??
       defaultChecks('update', `Assert.isNotNull(result.Id, 'The ${object} should still exist');`);
@@ -414,13 +331,13 @@ function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, values: C
   };
 
   const deleteBody = (): string[] => {
-    const fields = recordFieldValues(object, settable, required);
+    const fields = recordFieldValues(object, plan.set, required);
     const walk = todos.length === 0 && flow.graph ? walkFlow(flow.graph, fieldState(fields, nullWhenUnset)) : undefined;
     const blocked = walk?.customError
       ? flowChecks({ writes: [], customError: walk.customError }, object, variable, 'delete', i2)
       : undefined;
     return [
-      ...newRecord(object, variable, recordFields(object, settable, required), i2, required),
+      ...newRecord(object, variable, recordFields(object, plan.set, required), i2, required),
       ...todos.map((t) => `${i2}${t}`),
       `${i2}insert ${variable};`,
       '',
@@ -492,7 +409,7 @@ function interviewMethod(flow: FlowMetadata, name: string, notes: string[], requ
     if (variable.dataType === 'SObject' && variable.objectType && !variable.isCollection) {
       const local = `${camel(variable.name) || 'input'}Input`;
       lines.push(
-        ...newRecord(variable.objectType, local, recordFields(variable.objectType, [], required), i2, required),
+        ...newRecord(variable.objectType, local, recordFields(variable.objectType, new Map(), required), i2, required),
       );
       lines.push(`${i2}insert ${local};`, `${i2}inputs.put('${escapeApexString(variable.name)}', ${local});`);
     } else {
@@ -523,15 +440,15 @@ function interviewMethod(flow: FlowMetadata, name: string, notes: string[], requ
 function platformEventMethod(flow: FlowMetadata, required: RequiredFieldMap, values: CriteriaValues): string[] {
   const event = flow.object as string;
   const i2 = INDENT.repeat(2);
-  const { settable, handled } = resolveCriteria(flow.filters, event, values, 'insert');
+  const plan = planCriteria(flow, event, values, required, 'insert');
   return [
     `${INDENT}@IsTest`,
     `${INDENT}static void runsFlowOnEvent() {`,
-    ...newRecord(event, 'testEvent', recordFields(event, settable, required), i2, required).filter(
+    ...newRecord(event, 'testEvent', recordFields(event, plan.set, required), i2, required).filter(
       (l) => !l.includes('TODO: set the required'),
     ),
     `${i2}// TODO: set the event fields this Flow reads`,
-    ...criteriaTodos(flow, handled).map((t) => `${i2}${t}`),
+    ...criteriaTodos(plan).map((t) => `${i2}${t}`),
     '',
     `${i2}Test.startTest();`,
     `${i2}EventBus.publish(testEvent);`,
@@ -573,6 +490,8 @@ export type GenerateOptions = {
   lookups?: Record<string, Record<string, string>>;
   /** Fields that stay empty when a test doesn't set them, per object. Lets assertions follow the Flow's decisions. */
   nullWhenUnset?: Record<string, string[]>;
+  /** Lookup field per relationship name (`Account` to `AccountId`), per object. Meets criteria on related records. */
+  relationships?: Record<string, Record<string, string>>;
 };
 
 type ResolvedLookups = {
@@ -615,7 +534,12 @@ const METHOD_START = /^\s+static void \w+\(\) \{$/;
  * Inserts each parent record a test method uses at the top of that method. Parents get their
  * own required fields from the describe; their lookups stay TODOs (one level deep).
  */
-function withParentInserts(lines: string[], parents: Map<string, string>, required: RequiredFieldMap): string[] {
+function withParentInserts(
+  lines: string[],
+  parents: Map<string, string>,
+  required: RequiredFieldMap,
+  parentFields: Map<string, Map<string, string>>,
+): string[] {
   if (parents.size === 0) return lines;
   const i2 = INDENT.repeat(2);
   const out: string[] = [];
@@ -626,7 +550,13 @@ function withParentInserts(lines: string[], parents: Map<string, string>, requir
     const used = [...parents].filter(([variable]) => new RegExp(`\\b${variable}\\.Id\\b`).test(body));
     for (const [variable, object] of used) {
       out.push(
-        ...newRecord(object, variable, recordFields(object, [], required), i2, required),
+        ...newRecord(
+          object,
+          variable,
+          recordFields(object, parentFields.get(object) ?? new Map(), required),
+          i2,
+          required,
+        ),
         `${i2}insert ${variable};`,
       );
     }
@@ -636,14 +566,16 @@ function withParentInserts(lines: string[], parents: Map<string, string>, requir
 }
 
 /** Generates a starter Apex test class for a Flow from its metadata. */
-export function generateApexTest(source: FlowMetadata, options: GenerateOptions = {}): GeneratedApexTest {
-  const flow = withFormulaFilters(source);
+export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = {}): GeneratedApexTest {
   const lookups = resolveLookups(options);
   const required = lookups.required;
   const values: CriteriaValues = {
     fieldValues: lookups.fieldValues,
     changedValues: options.changedValues ?? {},
     nullWhenUnset: options.nullWhenUnset ?? {},
+    relationships: options.relationships ?? {},
+    lookups: options.lookups ?? {},
+    parentFields: new Map(),
   };
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);
@@ -682,7 +614,7 @@ export function generateApexTest(source: FlowMetadata, options: GenerateOptions 
       methods = processMethod(flow);
   }
 
-  methods = withParentInserts(methods, lookups.parents, options.requiredFields ?? {});
+  methods = withParentInserts(methods, lookups.parents, options.requiredFields ?? {}, values.parentFields);
   const body = [...header(flow, description), `private class ${className} {`, ...methods, '}', ''].join('\n');
   return { className, body, kind };
 }
