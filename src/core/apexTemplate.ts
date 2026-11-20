@@ -235,6 +235,9 @@ function errorText(message: string | undefined): string | undefined {
   return fixed ? fixed : undefined;
 }
 
+/** An object from a managed package: `namespace__Object__c`. */
+const MANAGED_OBJECT = /^[A-Za-z][A-Za-z0-9]*__[A-Za-z0-9_]+__c$/;
+
 /**
  * Assertions on records the Flow creates and links back to the record (a field set to
  * `$Record.Id`): one of them exists with the literal values the Flow sets.
@@ -251,6 +254,14 @@ function createdChecks(creates: RecordCreate[], variable: string, i2: string): s
       // With a fault path, a failed create (a validation rule, say) doesn't fail the Flow.
       lines.push(
         `${i2}// TODO: ${create.element} creates a ${create.object} unless it fails and its fault path runs; assert it`,
+      );
+      return;
+    }
+    if (MANAGED_OBJECT.test(create.object)) {
+      // A package's own automation can process its records as soon as they exist (a job queue
+      // that runs and deletes its jobs, say), so what the Flow set may not be there to find.
+      lines.push(
+        `${i2}// TODO: ${create.element} creates a ${create.object}, which its managed package may change or delete; assert it`,
       );
       return;
     }

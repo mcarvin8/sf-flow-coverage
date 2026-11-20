@@ -371,6 +371,22 @@ describe('generateApexTest assertions from the Flow', () => {
     expect(test.body).toMatchSnapshot();
   });
 
+  it('does not assert records of managed package objects, which the package may change or delete', () => {
+    const create = (object: string) =>
+      `<recordCreates><name>Make_${object.replace(/__/g, '_')}</name><object>${object}</object><inputAssignments><field>Record_Id__c</field><value><elementReference>$Record.Id</elementReference></value></inputAssignments><inputAssignments><field>Start__c</field><value><booleanValue>true</booleanValue></value></inputAssignments><connector><targetReference>Make_Local_c</targetReference></connector></recordCreates>`;
+    const elements =
+      create('pkg__Job__c').replace('<name>Make_pkg_Job_c</name>', '<name>First</name>') +
+      create('Local__c').replace('<connector><targetReference>Make_Local_c</targetReference></connector>', '');
+    const test = generateApexTest(jobFlow(elements));
+    expect(test.body).toContain(
+      '// TODO: First creates a pkg__Job__c, which its managed package may change or delete; assert it',
+    );
+    expect(test.body).toContain(
+      'for (Local__c created2 : [SELECT Id, Start__c FROM Local__c WHERE Record_Id__c = :testRecord.Id]) {',
+    );
+    expect(test.body).not.toContain('FROM pkg__Job__c');
+  });
+
   it('does not assert creates or updates that can fail into a fault path', () => {
     const fault = '<faultConnector><targetReference>Log</targetReference></faultConnector>';
     const elements =
