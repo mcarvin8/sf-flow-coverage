@@ -1,0 +1,313 @@
+{
+  "name": "sf-flow-coverage",
+  "description": "Get your Salesforce org ready to deploy Flows as active: find uncovered Flows, gate coverage per Flow in pull requests, and scaffold Apex tests.",
+  "version": "0.0.0",
+  "dependencies": {
+    "@oclif/core": "5.1.11",
+    "@salesforce/core": "9.4.5",
+    "@salesforce/sf-plugins-core": "13.0.9",
+    "fast-xml-parser": "5.12.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@commitlint/cli": "21.2.4",
+    "@commitlint/config-conventional": "21.2.4",
+    "@salesforce/cli-plugins-testkit": "5.3.93",
+    "@salesforce/dev-config": "4.3.3",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
+    "@types/node": "26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
+    "husky": "9.1.7",
+    "knip": "6.44.2",
+    "lint-staged": "17.6.0",
+    "ls-engines": "0.10.1",
+    "oclif": "6.0.15",
+    "shx": "0.4.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0",
+    "wireit": "0.15.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "/lib",
+    "/messages",
+    "/oclif.manifest.json",
+    "/oclif.lock",
+    "/CHANGELOG.md"
+  ],
+  "keywords": [
+    "salesforce",
+    "salesforcedx",
+    "sf",
+    "sf-plugin",
+    "sfdx",
+    "flow",
+    "flow-coverage",
+    "test-coverage",
+    "apex",
+    "ci",
+    "devops",
+    "salesforce-flow",
+    "flowcov"
+  ],
+  "license": "MIT",
+  "oclif": {
+    "commands": "./lib/commands",
+    "bin": "sf",
+    "topicSeparator": " ",
+    "devPlugins": [
+      "@oclif/plugin-help"
+    ],
+    "topics": {
+      "flowcov": {
+        "description": "Measure, gate, and scaffold Apex test coverage for Salesforce Flows."
+      }
+    },
+    "flexibleTaxonomy": true
+  },
+  "scripts": {
+    "build": "wireit",
+    "clean": "wireit",
+    "clean:build": "wireit",
+    "clean:package-manager": "wireit",
+    "compile": "wireit",
+    "dependencies:upgrade": "npx npm-check-updates -u && npm install && npm audit fix",
+    "format": "wireit",
+    "lint": "wireit",
+    "lint:dependencies": "wireit",
+    "lint:engine": "wireit",
+    "postpack": "shx rm -f oclif.manifest.json oclif.lock",
+    "prepack": "wireit",
+    "prepare": "husky",
+    "readme": "wireit",
+    "test": "wireit",
+    "test:mutation": "wireit",
+    "test:mutation:incremental": "wireit",
+    "test:nuts": "wireit",
+    "test:only": "wireit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "wireit": {
+    "build": {
+      "dependencies": [
+        "compile",
+        "lint"
+      ]
+    },
+    "clean": {
+      "command": "shx rm -rf 'reports/*' oclif.manifest.json oclif.lock package.tgz 'sf-flow-coverage-*.tgz' 'stderr*.txt' 'stdout*.txt' '.stryker-tmp/*'",
+      "files": [
+        ".stryker-tmp/*",
+        "lib",
+        "oclif.manifest.json",
+        "oclif.lock",
+        "package.tgz",
+        "reports/*",
+        "sf-flow-coverage-v*.tgz",
+        "stderr*.txt",
+        "stdout*.txt"
+      ],
+      "dependencies": [
+        "clean:build"
+      ]
+    },
+    "clean:build": {
+      "command": "shx rm -rf lib .wireit",
+      "files": [
+        ".wireit/*",
+        "lib/*"
+      ]
+    },
+    "clean:package-manager": {
+      "command": "shx rm -rf node_modules tsconfig.tsbuildinfo",
+      "files": [
+        "node_modules/*"
+      ]
+    },
+    "compile": {
+      "command": "tsc -p . --pretty --incremental",
+      "files": [
+        "src/**/*.ts",
+        "**/tsconfig.json",
+        "messages/**"
+      ],
+      "output": [
+        "lib/**",
+        "*.tsbuildinfo"
+      ],
+      "clean": "if-file-deleted"
+    },
+    "format": {
+      "command": "biome format --write src test",
+      "files": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "biome.json"
+      ],
+      "output": []
+    },
+    "lint": {
+      "command": "biome check src test",
+      "files": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "messages/**",
+        "biome.json",
+        "**/tsconfig.json"
+      ],
+      "output": []
+    },
+    "lint:dependencies": {
+      "command": "knip",
+      "files": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "knip.config.ts",
+        "package.json"
+      ],
+      "output": [],
+      "dependencies": [
+        "lint"
+      ]
+    },
+    "lint:engine": {
+      "command": "ls-engines --no-current --no-dev --mode=virtual",
+      "files": [
+        "package.json",
+        "package-lock.json"
+      ],
+      "output": []
+    },
+    "readme": {
+      "command": "oclif readme",
+      "files": [
+        "src/commands/**/*.ts",
+        "messages/*.md",
+        "README.md"
+      ],
+      "dependencies": [
+        "build"
+      ],
+      "output": [
+        "README.md"
+      ],
+      "clean": false
+    },
+    "test:compile": {
+      "command": "tsc -p \"./test\" --pretty",
+      "files": [
+        "test/**/*.ts",
+        "**/tsconfig.json"
+      ],
+      "output": []
+    },
+    "test": {
+      "dependencies": [
+        "test:compile",
+        "test:only",
+        "lint"
+      ]
+    },
+    "test:mutation": {
+      "command": "stryker run",
+      "files": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "**/tsconfig.json",
+        "stryker.config.json",
+        "vitest.config.ts"
+      ],
+      "output": [
+        "reports/mutation/**"
+      ],
+      "dependencies": [
+        "lint"
+      ]
+    },
+    "test:mutation:incremental": {
+      "command": "node scripts/incremental-mutation.mjs",
+      "files": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "**/tsconfig.json",
+        "stryker.config.json",
+        "vitest.config.ts",
+        "scripts/incremental-mutation.mjs"
+      ],
+      "output": [
+        "reports/mutation/**"
+      ],
+      "dependencies": [
+        "lint"
+      ]
+    },
+    "test:nuts": {
+      "command": "vitest run --config ./vitest.nut.config.ts && shx rm -f oclif.manifest.json oclif.lock *.tsbuildinfo",
+      "files": [
+        "test/**/*.nut.ts",
+        "**/tsconfig.json",
+        "vitest.nut.config.ts"
+      ],
+      "output": [],
+      "dependencies": [
+        "build",
+        "prepack"
+      ]
+    },
+    "test:only": {
+      "command": "vitest run --coverage",
+      "env": {
+        "FORCE_COLOR": "2"
+      },
+      "files": [
+        "test/**/*.ts",
+        "src/**/*.ts",
+        "**/tsconfig.json",
+        "vitest.config.ts",
+        "!*.nut.ts"
+      ],
+      "output": []
+    },
+    "prepack": {
+      "command": "oclif manifest && oclif readme",
+      "files": [
+        "src/commands/**/*.ts",
+        "messages/*.md",
+        "README.md"
+      ],
+      "dependencies": [
+        "build"
+      ],
+      "output": [
+        "README.md"
+      ],
+      "clean": false
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./lib/index.d.ts",
+  "type": "module",
+  "author": "Matt Carvin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcarvin8/sf-flow-coverage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mcarvin8/sf-flow-coverage/issues"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
