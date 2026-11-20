@@ -1,7 +1,7 @@
 import { Messages } from '@salesforce/core';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { describeElements } from '../../core/elementCoverage.js';
-import { DEFAULT_THRESHOLD } from '../../core/flowTypes.js';
+import { DEFAULT_THRESHOLD, isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from '../../core/flowTypes.js';
 import { getFlowChurn } from '../../core/git.js';
 import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
 import { buildReadinessReport } from '../../core/readiness.js';
@@ -75,7 +75,7 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
         title: 'Uncovered Flows',
         data: uncovered.map((f) => ({
           Flow: f.flowName,
-          Type: f.processType,
+          Type: processTypeLabel(f.processType),
           Version: f.versionNumber ?? '',
           ...(showChanges ? { Changes: f.changes ?? 0 } : {}),
         })),
@@ -84,16 +84,24 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
 
     const covered = result.flows.filter((f) => f.covered);
     const showUncovered = covered.some((f) => (f.uncoveredElements?.length ?? 0) > 0);
+    const showType = covered.some((f) => isProcessBuilder(f.processType));
     if (covered.length > 0) {
       this.table({
         title: 'Covered Flows',
         data: covered.map((f) => ({
           Flow: f.flowName,
+          ...(showType ? { Type: processTypeLabel(f.processType) } : {}),
           'Element Coverage': `${f.elementCoveragePercent}%`,
           ...(showUncovered ? { 'Uncovered Elements': describeElements(f.uncoveredElements ?? []) } : {}),
           Tests: [...new Set(f.tests.map((t) => `${t.className}.${t.methodName}`))].join(', '),
         })),
       });
+    }
+
+    if (result.processBuilderProcesses > 0) {
+      this.warn(
+        `${result.processBuilderProcesses} of the active Flows are Process Builder processes (Type "Process Builder"). ${PROCESS_BUILDER_ADVICE}`,
+      );
     }
   }
 }

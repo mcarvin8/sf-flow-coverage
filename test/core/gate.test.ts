@@ -167,6 +167,18 @@ describe('evaluateGate', () => {
     expect(result.flows[4].reason).toContain('(latest is version ?, inactive)');
   });
 
+  it('warns that a changed Process Builder process should be migrated', async () => {
+    const result = await evaluateGate({
+      source: fakeSource([coverage('Process', { processType: 'InvocableProcess' }), coverage('Flow_One')]),
+      candidates: [{ flowName: 'Process' }, { flowName: 'Flow_One' }],
+    });
+    expect(result.passed).toBe(true);
+    expect(result.flows[0].warnings).toEqual([
+      'This is a Process Builder (invocable) process. Salesforce no longer supports Process Builder. Migrate processes to Flows with the Migrate to Flow tool in Setup rather than writing tests for them; each migrated Flow still needs an Apex test.',
+    ]);
+    expect(result.flows[1].warnings).toBeUndefined();
+  });
+
   it('reports an unknown version number', async () => {
     const source = fakeSource([coverage('X', { covered: false, versionNumber: undefined })]);
     const result = await evaluateGate({ source, candidates: [{ flowName: 'X' }] });

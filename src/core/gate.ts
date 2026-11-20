@@ -1,6 +1,12 @@
 import { describeElements, findUncoveredElements } from './elementCoverage.js';
 import { compareFingerprints, type FlowFingerprint, fingerprintFromXml } from './flowFingerprint.js';
-import { flowNameFromPath, isCountedProcessType } from './flowTypes.js';
+import {
+  flowNameFromPath,
+  isCountedProcessType,
+  isProcessBuilder,
+  PROCESS_BUILDER_ADVICE,
+  processTypeLabel,
+} from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
 import { getChangedFlowFiles, showFileAtRevision } from './git.js';
 import type { ContentCheck, CoverageSource, FlowCoverage, FlowMetadata, GateFlowResult, GateResult } from './types.js';
@@ -163,6 +169,12 @@ export async function evaluateGate(options: GateOptions): Promise<GateResult> {
         result.reason = mismatch;
       } else if (mismatch) {
         result.warnings = [mismatch];
+      }
+      if (isProcessBuilder(flow.processType)) {
+        result.warnings = [
+          ...(result.warnings ?? []),
+          `This is a ${processTypeLabel(flow.processType)} process. ${PROCESS_BUILDER_ADVICE}`,
+        ];
       }
       results.push(result);
     }

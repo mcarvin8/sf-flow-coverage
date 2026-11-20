@@ -1,5 +1,6 @@
 import { parseFilterFormula } from './filterFormula.js';
 import { type FieldState, type FieldWrite, type FlowWalk, walkFlow } from './flowGraph.js';
+import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './flowTypes.js';
 import { escapeApexString } from './flowXml.js';
 import { canInsertParent, EXISTING_RECORD_IDS, type RequiredFieldMap } from './requiredFields.js';
 import type { FlowFilter, FlowMetadata, FlowVariable } from './types.js';
@@ -545,10 +546,12 @@ function platformEventMethod(flow: FlowMetadata, required: RequiredFieldMap, val
 
 function processMethod(flow: FlowMetadata): string[] {
   const i2 = INDENT.repeat(2);
+  const advice = PROCESS_BUILDER_ADVICE.split(/(?<=\.) /).map((sentence) => `${i2}// ${sentence}`);
   return [
     `${INDENT}@IsTest`,
     `${INDENT}static void runsProcess() {`,
-    `${i2}// TODO: ${flow.processType ?? 'This'} processes start when a record changes or an event fires.`,
+    ...(isProcessBuilder(flow.processType) ? advice : []),
+    `${i2}// TODO: ${flow.processType ? processTypeLabel(flow.processType) : 'These'} processes start when a record changes or an event fires.`,
     `${i2}// Insert or update a record that meets this process's criteria between startTest and stopTest.`,
     `${i2}Test.startTest();`,
     `${i2}Test.stopTest();`,
