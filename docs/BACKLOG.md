@@ -55,7 +55,7 @@ Record-triggered tests now follow the Flow's elements: they assert the `$Record`
 
 ### 8. `sf flowcov transform`
 
-Convert Flow coverage into SonarQube generic, Cobertura, or lcov format, so Flow coverage shows up next to Apex coverage in existing tools.
+Done: writes SonarQube generic, Cobertura, and lcov reports, one line per element. Possible next steps: decision outcomes as branches (Cobertura `branch-rate`, lcov `BRDA`) if Salesforce ever reports which outcomes ran, and merging with Apex coverage reports into a single file.
 
 ### 9. Markdown output
 

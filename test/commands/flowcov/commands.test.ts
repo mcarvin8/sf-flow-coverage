@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockTestOrgData, TestContext } from '@salesforce/core/testSetup';
@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import FlowcovGate from '../../../src/commands/flowcov/gate.js';
 import FlowcovReadiness from '../../../src/commands/flowcov/readiness.js';
 import FlowcovScaffold from '../../../src/commands/flowcov/scaffold.js';
+import FlowcovTransform from '../../../src/commands/flowcov/transform.js';
 import type { FlowFingerprint } from '../../../src/core/flowFingerprint.js';
 import type { FlowCoverage } from '../../../src/core/types.js';
 import { flowXml, TempGitRepo } from '../../gitRepo.js';
@@ -210,6 +211,75 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
 
     it('requires --from or --flow', async () => {
       await expect(FlowcovGate.run(['--target-org', testOrg.username])).rejects.toThrow(/Provide --from/);
+    });
+  });
+
+  describe('transform', () => {
+    it('writes each requested format and reports skipped Flows and mismatches', async () => {
+      writeFileSync(
+        join(out, 'Job.flow-meta.xml'),
+        [
+          '<Flow>',
+          '<decisions>',
+          '<name>Check</name>',
+          '</decisions>',
+          '<assignments>',
+          '<name>Set</name>',
+          '</assignments>',
+          '</Flow>',
+          '',
+        ].join('\n'),
+      );
+      orgFlows.value = [
+        coverage('Job', { versionNumber: 3, elementsCovered: 1, elementsTotal: 3, coveredElementNames: ['check'] }),
+        coverage('Elsewhere'),
+      ];
+      const reports = join(out, 'reports');
+      const result = await FlowcovTransform.run([
+        '--target-org',
+        testOrg.username,
+        '--project-dir',
+        out,
+        '--format',
+        'lcov',
+        '--format',
+        'sonar',
+        '--format',
+        'lcov',
+        '--output-dir',
+        reports,
+      ]);
+      expect(result.files).toEqual([
+        { format: 'lcov', path: join(reports, 'flow-coverage.info') },
+        { format: 'sonar', path: join(reports, 'flow-coverage-sonar.xml') },
+      ]);
+      expect(result.flows).toEqual([
+        { flowName: 'Job', path: 'Job.flow-meta.xml', elementsCovered: 1, elementsTotal: 2 },
+      ]);
+      expect(readFileSync(join(reports, 'flow-coverage.info'), 'utf8')).toContain(
+        'SF:Job.flow-meta.xml\nDA:3,1\nDA:6,0\n',
+      );
+      expect(tableRows()).toEqual([{ Flow: 'Job', File: 'Job.flow-meta.xml', 'Elements Covered': '1 of 2' }]);
+      expect(logged()).toContain('Job: Job.flow-meta.xml has 2 elements, but version 3 in the org has 3.');
+      expect(logged()).toContain('Elsewhere: No source file in the project.');
+      expect(logged()).toContain('Wrote sonar coverage for 1 Flow(s) to');
+    });
+
+    it('writes empty reports when no Flow has a source file', async () => {
+      orgFlows.value = [];
+      const result = await FlowcovTransform.run([
+        '--target-org',
+        testOrg.username,
+        '--project-dir',
+        out,
+        '--format',
+        'cobertura',
+        '--output-dir',
+        out,
+      ]);
+      expect(result.flows).toEqual([]);
+      expect(tableRows()).toEqual([]);
+      expect(readFileSync(join(out, 'flow-coverage-cobertura.xml'), 'utf8')).toContain('lines-valid="0"');
     });
   });
 
