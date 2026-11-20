@@ -34,9 +34,10 @@ AND(
 
 ### 5. More filter operators
 
-- `GreaterThan` / `LessThan` (and the `OrEqualTo` forms): pick a value past the bound.
-- `IsChanged`: set a different value in the update test.
-- `Contains`, `StartsWith`, `EndsWith`: build a matching string.
+Comparisons, `Contains`/`StartsWith`/`EndsWith`, and `IsChanged` are handled. Still left as TODOs:
+
+- `NotEqualTo`: use a described value that differs from the literal.
+- Filters compared with another field or a resource (`$Record.Max__c`, `$User.Id`) instead of a literal.
 
 ### 6. Parent records for lookups
 

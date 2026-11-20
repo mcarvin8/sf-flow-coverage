@@ -44,7 +44,10 @@ function parseFilterValue(value: XmlRecord | undefined): Pick<FlowFilter, 'apexV
   const dateValue = text(value.dateValue);
   if (dateValue !== undefined)
     return { apexValue: `Date.valueOf('${escapeApexString(dateValue)}')`, rawValue: dateValue };
-  const raw = text(value.elementReference) ?? text(value.dateTimeValue);
+  const dateTimeValue = text(value.dateTimeValue);
+  const dateTime = dateTimeValue && /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/.exec(dateTimeValue);
+  if (dateTime) return { apexValue: `Datetime.valueOfGmt('${dateTime[1]} ${dateTime[2]}')`, rawValue: dateTimeValue };
+  const raw = text(value.elementReference) ?? dateTimeValue;
   return raw === undefined ? {} : { rawValue: raw };
 }
 

@@ -148,3 +148,131 @@ describe('apexClassMetaXml', () => {
     expect(apexClassMetaXml('64.0')).toContain('<apiVersion>64.0</apiVersion>');
   });
 });
+
+describe('generateApexTest entry-criteria operators', () => {
+  const recordFlow = (filters: FlowMetadata['filters'], recordTriggerType = 'Create'): FlowMetadata => ({
+    ...base,
+    triggerType: 'RecordAfterSave',
+    recordTriggerType,
+    object: 'Job__c',
+    filters,
+  });
+
+  it('picks a value past or at each comparison bound', () => {
+    const test = generateApexTest(
+      recordFlow([
+        { field: 'Hours__c', operator: 'GreaterThan', apexValue: '1000.0', rawValue: '1000.0' },
+        { field: 'Rate__c', operator: 'LessThan', apexValue: '0.5', rawValue: '0.5' },
+        { field: 'Crew__c', operator: 'GreaterThanOrEqualTo', apexValue: '5', rawValue: '5' },
+        { field: 'Due__c', operator: 'LessThan', apexValue: "Date.valueOf('2026-01-31')", rawValue: '2026-01-31' },
+        { field: 'Start__c', operator: 'LessThanOrEqualTo', apexValue: "Date.valueOf('2026-02-01')", rawValue: 'x' },
+        {
+          field: 'Sent__c',
+          operator: 'GreaterThan',
+          apexValue: "Datetime.valueOfGmt('2026-01-31 09:30:00')",
+          rawValue: '2026-01-31T09:30:00Z',
+        },
+      ]),
+    );
+    expect(test.body).toContain('Hours__c = 1001,');
+    expect(test.body).toContain('Rate__c = -0.5,');
+    expect(test.body).toContain('Crew__c = 5,');
+    expect(test.body).toContain("Due__c = Date.valueOf('2026-01-31').addDays(-1),");
+    expect(test.body).toContain("Start__c = Date.valueOf('2026-02-01'),");
+    expect(test.body).toContain("Sent__c = Datetime.valueOfGmt('2026-01-31 09:30:00').addSeconds(1)");
+    expect(test.body).not.toContain('TODO: entry criteria');
+  });
+
+  it('uses the string itself for Contains, StartsWith, and EndsWith', () => {
+    const test = generateApexTest(
+      recordFlow([
+        { field: 'A__c', operator: 'Contains', apexValue: "'urgent'", rawValue: 'urgent' },
+        { field: 'B__c', operator: 'StartsWith', apexValue: "'INV-'", rawValue: 'INV-' },
+        { field: 'C__c', operator: 'EndsWith', apexValue: "'.pdf'", rawValue: '.pdf' },
+      ]),
+    );
+    expect(test.body).toContain("A__c = 'urgent',");
+    expect(test.body).toContain("B__c = 'INV-',");
+    expect(test.body).toContain("C__c = '.pdf'");
+    expect(test.body).not.toContain('TODO: entry criteria');
+  });
+
+  it('leaves a TODO when no value can meet the filter', () => {
+    const test = generateApexTest(
+      recordFlow([
+        { field: 'A__c', operator: 'GreaterThan', apexValue: "'m'", rawValue: 'm' },
+        { field: 'B__c', operator: 'LessThan', rawValue: '$Record.Max__c' },
+        { field: 'C__c', operator: 'Contains', apexValue: '5', rawValue: '5' },
+        { field: 'D__c', operator: 'Contains', rawValue: 'Other.Field' },
+        { field: 'E__c', operator: 'NotEqualTo', apexValue: "'x'", rawValue: 'x' },
+      ]),
+    );
+    for (const todo of [
+      'A__c GreaterThan m',
+      'B__c LessThan $Record.Max__c',
+      'C__c Contains 5',
+      'D__c Contains Other.Field',
+      'E__c NotEqualTo x',
+    ]) {
+      expect(test.body).toContain(`// TODO: entry criteria: ${todo}`);
+    }
+  });
+
+  describe('IsChanged', () => {
+    const changedValues = { Job__c: { Status__c: "'Done'", Notes__c: "'Changed'" } };
+
+    it('changes the field in the update test, and leaves a TODO in the create test', () => {
+      const test = generateApexTest(
+        recordFlow(
+          [{ field: 'Notes__c', operator: 'IsChanged', apexValue: 'true', rawValue: 'true' }],
+          'CreateAndUpdate',
+        ),
+        { changedValues },
+      );
+      const [create, update] = test.body.split('runsFlowOnUpdate');
+      expect(create).toContain('// TODO: entry criteria: Notes__c IsChanged true');
+      expect(update).toContain("testRecord.Notes__c = 'Changed';");
+      expect(update).not.toContain('TODO: entry criteria');
+    });
+
+    it('counts a field another filter already sets as changed', () => {
+      const test = generateApexTest(
+        recordFlow(
+          [
+            { field: 'Status__c', operator: 'EqualTo', apexValue: "'Closed'", rawValue: 'Closed' },
+            { field: 'Status__c', operator: 'IsChanged', apexValue: 'true', rawValue: 'true' },
+          ],
+          'Update',
+        ),
+        { changedValues },
+      );
+      expect(test.body).toContain("testRecord.Status__c = 'Closed';");
+      expect(test.body).not.toContain("testRecord.Status__c = 'Done';");
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('meets IsChanged false by leaving the field alone, unless another filter sets it', () => {
+      const test = generateApexTest(
+        recordFlow(
+          [
+            { field: 'Notes__c', operator: 'IsChanged', apexValue: 'false', rawValue: 'false' },
+            { field: 'Status__c', operator: 'EqualTo', apexValue: "'Closed'", rawValue: 'Closed' },
+            { field: 'Status__c', operator: 'IsChanged', apexValue: 'false', rawValue: 'false' },
+            { field: 'Odd__c', operator: 'IsChanged', rawValue: '$Flow.Thing' },
+          ],
+          'Update',
+        ),
+      );
+      expect(test.body).not.toContain('Notes__c IsChanged false');
+      expect(test.body).toContain('// TODO: entry criteria: Status__c IsChanged false');
+      expect(test.body).toContain('// TODO: entry criteria: Odd__c IsChanged $Flow.Thing');
+    });
+
+    it('leaves a TODO without a changed value from the org describe', () => {
+      const test = generateApexTest(
+        recordFlow([{ field: 'Rating', operator: 'IsChanged', apexValue: 'true', rawValue: 'true' }], 'Update'),
+      );
+      expect(test.body).toContain('// TODO: entry criteria: Rating IsChanged true');
+    });
+  });
+});
