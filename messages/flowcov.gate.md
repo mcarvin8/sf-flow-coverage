@@ -6,7 +6,7 @@ Require Apex test coverage for every Flow a pull request changes.
 
 Salesforce only checks that the org-wide total stays at or above 75%, so a single Flow with no tests can still be deployed as active. This gate checks each changed Flow on its own: every active autolaunched Flow or process changed between --from and --to must be run by at least one Apex test, and optionally reach a minimum element coverage.
 
-Coverage is read from FlowTestCoverage in the target org. Deploy the branch to the target org and run Apex tests there with `sf apex run test --code-coverage` before running the gate. Without `--code-coverage`, Salesforce records no Flow coverage. Flows that don't count toward deploy-as-active (screen Flows, inactive Flows) are skipped.
+Coverage is read from FlowTestCoverage in the target org. Deploy the branch to the target org and run Apex tests there with `sf apex run test --code-coverage` before running the gate. Without `--code-coverage`, Salesforce records no Flow coverage. When no Flow in the org has any coverage recorded, the command warns that the tests most likely ran without `--code-coverage`. Flows that don't count toward deploy-as-active (screen Flows, inactive Flows) are skipped.
 
 The gate also fails a Flow when the org has no active version of it, or when its active version is older than its latest version. Both usually mean the branch was deployed inactive, so the org's coverage doesn't belong to the version in the pull request.
 

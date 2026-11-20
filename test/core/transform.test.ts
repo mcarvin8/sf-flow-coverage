@@ -68,6 +68,22 @@ describe('buildFlowFileCoverage', () => {
   });
 });
 
+describe('buildFlowFileCoverage without any coverage in the org', () => {
+  it('warns first, before any per-Flow warning', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-transform-'));
+    try {
+      writeFileSync(join(project, 'Bare.flow-meta.xml'), flowFile('Only'));
+      const report = await buildFlowFileCoverage({
+        projectDir: project,
+        source: { ...fakeSource([coverage('Bare', { covered: false })]), hasAnyFlowCoverage: async () => false },
+      });
+      expect(report.warnings).toEqual([expect.stringContaining('--code-coverage')]);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('formatCoverage', () => {
   const files: FlowFileCoverage[] = [
     {

@@ -66,6 +66,11 @@ export type CoverageSource = {
    * source can't read the version's content.
    */
   getFlowFingerprint?(flowVersionId: string): Promise<FlowFingerprint | undefined>;
+  /**
+   * Whether the org has any Flow coverage at all, for any Flow version. False usually means
+   * Apex tests ran without code coverage on.
+   */
+  hasAnyFlowCoverage?(): Promise<boolean>;
 };
 
 /** Runs a Tooling API SOQL query and returns every record (all pages). */
@@ -136,6 +141,8 @@ export type ReadinessResult = {
   flowsNeeded: number;
   /** Active Process Builder processes among the counted Flows. Salesforce no longer supports Process Builder. */
   processBuilderProcesses: number;
+  /** Problems with the report as a whole, such as no Flow coverage recorded in the org. */
+  warnings: string[];
   /** Uncovered first (most-changed first), then covered. */
   flows: ReadinessFlow[];
 };
@@ -163,6 +170,8 @@ export type GateResult = {
   passed: boolean;
   minElementCoverage: number;
   flows: GateFlowResult[];
+  /** Problems with the run as a whole, such as no Flow coverage recorded in the org. */
+  warnings: string[];
 };
 
 export type TransformResult = {

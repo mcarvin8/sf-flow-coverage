@@ -16,6 +16,7 @@ import { coverage, FIXTURE_PROJECT } from '../../helpers.js';
 
 const orgFlows = vi.hoisted(() => ({ value: [] as FlowCoverage[] }));
 const orgFingerprints = vi.hoisted(() => ({ value: {} as Record<string, FlowFingerprint> }));
+const orgHasCoverage = vi.hoisted(() => ({ value: true }));
 
 vi.mock('../../../src/core/orgCoverageSource.js', () => ({
   OrgCoverageSource: class {
@@ -27,6 +28,9 @@ vi.mock('../../../src/core/orgCoverageSource.js', () => ({
     }
     public async getFlowFingerprint(id: string): Promise<FlowFingerprint | undefined> {
       return orgFingerprints.value[id];
+    }
+    public async hasAnyFlowCoverage(): Promise<boolean> {
+      return orgHasCoverage.value;
     }
   },
 }));
@@ -78,6 +82,20 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
         { Flow: 'Covered', 'Element Coverage': '80%', Tests: 'Covered_Test.runs' },
       ]);
       expect(process.exitCode).toBe(1);
+    });
+
+    it('warns when the org has no Flow coverage recorded at all', async () => {
+      orgFlows.value = [coverage('A', { covered: false }), coverage('B', { covered: false })];
+      orgHasCoverage.value = false;
+      try {
+        const result = await FlowcovReadiness.run(['--target-org', testOrg.username]);
+        expect(result.warnings).toEqual([expect.stringContaining('--code-coverage')]);
+        expect(logged()).toContain('The org has no Flow coverage recorded for any Flow.');
+        const gate = await FlowcovGate.run(['--target-org', testOrg.username, '--flow', 'A']);
+        expect(gate.warnings).toHaveLength(1);
+      } finally {
+        orgHasCoverage.value = true;
+      }
     });
 
     it('labels Process Builder processes and suggests migrating them', async () => {
@@ -223,7 +241,7 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
         '--project-dir',
         repo.dir,
       ]);
-      expect(result).toEqual({ passed: true, minElementCoverage: 0, flows: [] });
+      expect(result).toEqual({ passed: true, minElementCoverage: 0, flows: [], warnings: [] });
       expect(logged()).toContain('No Flows changed. Nothing to check.');
     });
 
