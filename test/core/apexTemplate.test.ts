@@ -150,6 +150,156 @@ describe('apexClassMetaXml', () => {
   });
 });
 
+describe('generateApexTest assertions from the Flow', () => {
+  /** A before-save Flow on Job__c with the given elements; `First` is the first element. */
+  const jobFlow = (elements: string, recordTriggerType = 'Create', filters = ''): FlowMetadata =>
+    parseFlowXml(
+      'Job_Flow',
+      `<Flow><processType>AutoLaunchedFlow</processType>${elements}<start>
+        <connector><targetReference>First</targetReference></connector>${filters}
+        <object>Job__c</object><recordTriggerType>${recordTriggerType}</recordTriggerType><triggerType>RecordBeforeSave</triggerType>
+      </start></Flow>`,
+    );
+  const assign = (name: string, field: string, value: string, next = ''): string =>
+    `<assignments><name>${name}</name><assignmentItems><assignToReference>$Record.${field}</assignToReference><operator>Assign</operator><value>${value}</value></assignmentItems>${next ? `<connector><targetReference>${next}</targetReference></connector>` : ''}</assignments>`;
+  const nullCheck = (name: string, field: string, yes: string, no: string): string =>
+    `<decisions><name>${name}</name><label>${name.replace(/_/g, ' ')}</label><defaultConnector><targetReference>${no}</targetReference></defaultConnector><defaultConnectorLabel>Has ${field}</defaultConnectorLabel><rules><name>No_${field}</name><label>No ${field}</label><conditionLogic>and</conditionLogic><conditions><leftValueReference>$Record.${field}</leftValueReference><operator>IsNull</operator><rightValue><booleanValue>true</booleanValue></rightValue></conditions><connector><targetReference>${yes}</targetReference></connector></rules></decisions>`;
+  const error = (name: string, message: string): string =>
+    `<customErrors><name>${name}</name><customErrorMessages><errorMessage>${message}</errorMessage></customErrorMessages></customErrors>`;
+  const filter = (field: string, value: string): string =>
+    `<filters><field>${field}</field><operator>EqualTo</operator><value><stringValue>${value}</stringValue></value></filters>`;
+  const nullWhenUnset = { Job__c: ['Due__c', 'Owner__c'] };
+
+  it('asserts the fields the Flow is certain to set', () => {
+    const test = generateApexTest(
+      jobFlow(
+        assign('First', 'Status__c', '<stringValue>Scheduled</stringValue>', 'Second') +
+          assign('Second', 'Hours__c', '<numberValue>3.0</numberValue>', 'Third') +
+          assign('Third', 'Note__c', '<elementReference>$Record.Name</elementReference>'),
+      ),
+    );
+    expect(test.body).toContain(
+      [
+        '        Job__c result = [SELECT Id, Status__c, Hours__c, Note__c FROM Job__c WHERE Id = :testRecord.Id];',
+        "        Assert.areEqual('Scheduled', result.Status__c, 'First should set Status__c');",
+        "        Assert.areEqual(3.0, result.Hours__c, 'Second should set Hours__c');",
+        '        // TODO: Third sets Note__c to $Record.Name; assert it',
+      ].join('\n'),
+    );
+    expect(test.body).not.toContain('Assert.isNotNull');
+    expect(test.body).toMatchSnapshot();
+  });
+
+  it('follows decisions the record state settles, and comments out what other branches would do', () => {
+    const elements =
+      nullCheck('First', 'Due__c', 'Set_Due', 'Owner_Check') +
+      assign('Set_Due', 'Due__c', '<dateValue>2026-01-31</dateValue>', 'Owner_Check') +
+      nullCheck('Owner_Check', 'Reviewer__c', 'Flag', 'Done') +
+      assign('Flag', 'Flagged__c', '<booleanValue>true</booleanValue>', 'Done') +
+      assign('Done', 'Status__c', '<stringValue>Done</stringValue>');
+    const test = generateApexTest(jobFlow(elements), { nullWhenUnset });
+    expect(test.body).toContain(
+      "Assert.areEqual(Date.valueOf('2026-01-31'), result.Due__c, 'Set_Due should set Due__c');",
+    );
+    expect(test.body).toContain("        // Assert.areEqual('Done', result.Status__c, 'Done should set Status__c');");
+    expect(test.body).not.toContain("        Assert.areEqual('Done', result.Status__c");
+    expect(test.body).toContain('// TODO: when Owner Check takes "No Reviewer__c", the Flow also:');
+    expect(test.body).toContain("// Assert.areEqual(true, result.Flagged__c, 'Flag should set Flagged__c');");
+    expect(test.body).toContain('// TODO: when Owner Check takes "Has Reviewer__c", the Flow also:');
+    expect(test.body).toContain('SELECT Id, Due__c, Flagged__c, Status__c FROM');
+    expect(test.body).toMatchSnapshot();
+  });
+
+  it('expects the custom error the Flow is certain to raise', () => {
+    const elements =
+      nullCheck('First', 'Due__c', 'No_Date', 'Fine') +
+      error('No_Date', "Set the job's due date") +
+      assign('Fine', 'Ok__c', '<booleanValue>true</booleanValue>');
+    const update = generateApexTest(jobFlow(elements, 'Update', filter('Status__c', 'Closed')), { nullWhenUnset });
+    expect(update.body).toContain(
+      [
+        '        Test.startTest();',
+        "        testRecord.Status__c = 'Closed';",
+        '        try {',
+        '            update testRecord;',
+        "            Assert.fail('No_Date should block this save with a custom error');",
+        '        } catch (DmlException e) {',
+        "            Assert.isTrue(e.getMessage().contains('Set the job\\'s due date'), e.getMessage());",
+        '        }',
+        '        Test.stopTest();',
+        '    }',
+      ].join('\n'),
+    );
+    expect(update.body).not.toContain('result');
+    expect(update.body).toMatchSnapshot();
+
+    const merged = generateApexTest(
+      jobFlow(
+        nullCheck('First', 'Due__c', 'No_Date', 'Fine') + error('No_Date', '{!$Record.Name} needs a date'),
+        'Delete',
+      ),
+      { nullWhenUnset },
+    );
+    expect(merged.body).toContain('            delete testRecord;');
+    expect(merged.body).toContain("Assert.isNotNull(e.getMessage(), 'The custom error should have a message');");
+    expect(merged.body).not.toContain('SELECT COUNT()');
+  });
+
+  it('keeps the delete test when no custom error is certain', () => {
+    const test = generateApexTest(
+      jobFlow(nullCheck('First', 'Due__c', 'No_Date', 'Fine') + error('No_Date', 'x'), 'Delete'),
+    );
+    expect(test.body).toContain('SELECT COUNT() FROM Job__c');
+    expect(test.body).not.toContain('try {');
+  });
+
+  it('asserts nothing when the test may not meet the entry criteria or change the record', () => {
+    const elements = assign('First', 'Status__c', '<stringValue>Done</stringValue>');
+    const unmet = generateApexTest(
+      jobFlow(
+        elements,
+        'Create',
+        '<filters><field>Total__c</field><operator>EqualTo</operator><value><elementReference>$Record.Limit__c</elementReference></value></filters>',
+      ),
+    );
+    expect(unmet.body).toContain('// TODO: query and assert the fields this Flow sets');
+    expect(unmet.body).not.toContain('Assert.areEqual');
+
+    const unchanged = generateApexTest(jobFlow(elements, 'Update', filter('Name', 'Test')), {
+      requiredFields: { Job__c: { Name: "'Test'" } },
+    });
+    expect(unchanged.body).toContain("Assert.isNotNull(result.Id, 'The Job__c should still exist');");
+    expect(unchanged.body).not.toContain('Assert.areEqual');
+
+    const noWrites = generateApexTest(jobFlow('<recordLookups><name>First</name></recordLookups>'));
+    expect(noWrites.body).toContain('// TODO: query and assert the fields this Flow sets');
+  });
+
+  it('treats fields the Flow writes as unknown in the update test of a create-and-update Flow', () => {
+    const elements =
+      nullCheck('First', 'Due__c', 'Set_Due', 'Done') +
+      assign('Set_Due', 'Due__c', '<dateValue>2026-01-31</dateValue>', 'Done') +
+      assign('Done', 'Status__c', '<stringValue>Done</stringValue>');
+    const test = generateApexTest(jobFlow(elements, 'CreateAndUpdate', filter('Stage__c', 'Open')), { nullWhenUnset });
+    const [create, update] = test.body.split('runsFlowOnUpdate');
+    expect(create).toContain("Assert.areEqual(Date.valueOf('2026-01-31'), result.Due__c");
+    expect(create).toContain("Assert.areEqual('Done', result.Status__c");
+    expect(update).toContain('// TODO: when First takes "No Due__c", the Flow also:');
+    expect(update).toContain("Assert.areEqual('Done', result.Status__c");
+  });
+
+  it('reads a required lookup left empty as null', () => {
+    const elements =
+      nullCheck('First', 'Account__c', 'Set', 'Other') +
+      assign('Set', 'A__c', '<stringValue>a</stringValue>') +
+      assign('Other', 'A__c', '<stringValue>b</stringValue>');
+    const test = generateApexTest(jobFlow(elements), {
+      requiredFields: { Job__c: { Account__c: 'null /* TODO: set a Account Id */' } },
+    });
+    expect(test.body).toContain("Assert.areEqual('a', result.A__c, 'Set should set A__c');");
+  });
+});
+
 describe('generateApexTest entry-criteria operators', () => {
   const recordFlow = (filters: FlowMetadata['filters'], recordTriggerType = 'Create'): FlowMetadata => ({
     ...base,

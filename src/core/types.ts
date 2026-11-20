@@ -1,4 +1,5 @@
 import type { FlowFingerprint } from './flowFingerprint.js';
+import type { FlowGraph } from './flowGraph.js';
 
 /** One Apex test method that ran a Flow version. */
 export type FlowTestRef = {
@@ -93,6 +94,8 @@ export type FlowMetadata = {
   filters: FlowFilter[];
   filterLogic?: string;
   filterFormula?: string;
+  /** The Flow's elements, for working out what a test can assert. */
+  graph?: FlowGraph;
   variables: FlowVariable[];
 };
 

@@ -9,6 +9,7 @@ import {
   type DescribeField,
   loadObjectFields,
   lookupTargets,
+  nullWhenUnsetFields,
   requiredFieldValues,
   settableFieldValues,
 } from '../../src/core/requiredFields.js';
@@ -106,6 +107,7 @@ describe('loadObjectFields', () => {
       fieldValues: { Installation__c: { Crew_Size__c: '1' } },
       changedValues: { Installation__c: { Crew_Size__c: '2' } },
       lookups: { Installation__c: {} },
+      nullWhenUnset: { Installation__c: [] },
     });
   });
 
@@ -134,6 +136,26 @@ describe('lookupTargets', () => {
         field('Name', 'string'),
       ]),
     ).toEqual({ Account__c: 'Account' });
+  });
+});
+
+describe('nullWhenUnsetFields', () => {
+  it('lists createable, nillable fields with no default value', () => {
+    expect(
+      nullWhenUnsetFields([
+        field('Notes__c', 'string', { nillable: true }),
+        field('Name', 'string'),
+        field('Stage__c', 'picklist', { nillable: true, defaultedOnCreate: true }),
+        field('Type__c', 'picklist', {
+          nillable: true,
+          picklistValues: [{ value: 'A', active: true, defaultValue: true }],
+        }),
+        field('Kind__c', 'picklist', { nillable: true, picklistValues: [{ value: 'A', active: true }] }),
+        field('Total__c', 'double', { nillable: true, calculated: true }),
+        field('Number__c', 'string', { nillable: true, autoNumber: true }),
+        field('Locked__c', 'string', { nillable: true, createable: false }),
+      ]),
+    ).toEqual(['Notes__c', 'Kind__c']);
   });
 });
 

@@ -1,4 +1,5 @@
 import { parseFilterFormula } from './filterFormula.js';
+import { type FieldState, type FieldWrite, type FlowWalk, walkFlow } from './flowGraph.js';
 import { escapeApexString } from './flowXml.js';
 import { canInsertParent, EXISTING_RECORD_IDS, type RequiredFieldMap } from './requiredFields.js';
 import type { FlowFilter, FlowMetadata, FlowVariable } from './types.js';
@@ -87,6 +88,8 @@ type CriteriaValues = {
   fieldValues: RequiredFieldMap;
   /** A value per field that differs from the insert value, for `IsChanged true`. */
   changedValues: RequiredFieldMap;
+  /** Fields that stay empty when the test doesn't set them, for following the Flow's decisions. */
+  nullWhenUnset: Record<string, string[]>;
 };
 
 /** Whether the test inserts the record (create, delete, platform event) or updates it after inserting. */
@@ -200,10 +203,116 @@ function knownRequired(object: string, required: RequiredFieldMap): Record<strin
   return required[object] ?? REQUIRED_FIELDS[object];
 }
 
-function recordFields(object: string, criteria: FieldAssignment[], required: RequiredFieldMap): string[] {
+function recordFieldValues(
+  object: string,
+  criteria: FieldAssignment[],
+  required: RequiredFieldMap,
+): Map<string, string> {
   const fields = new Map<string, string>(Object.entries(knownRequired(object, required) ?? {}));
   for (const assignment of criteria) fields.set(assignment.field, assignment.apexValue);
-  return [...fields].map(([field, value]) => `${field} = ${value}`);
+  return fields;
+}
+
+function recordFields(object: string, criteria: FieldAssignment[], required: RequiredFieldMap): string[] {
+  return [...recordFieldValues(object, criteria, required)].map(([field, value]) => `${field} = ${value}`);
+}
+
+/**
+ * What the test knows about the record's fields when the Flow runs: the values it sets, empty
+ * for fields the describe says stay empty, and nothing for `unknown` fields.
+ */
+function fieldState(
+  values: Map<string, string>,
+  nullWhenUnset: string[],
+  unknown: Set<string> = new Set(),
+): FieldState {
+  const state: FieldState = new Map();
+  for (const field of nullWhenUnset) if (!unknown.has(field)) state.set(field, null);
+  for (const [field, value] of values) {
+    // `null /* TODO: set a ... Id */` leaves the field empty.
+    state.set(field, /^null\b/.test(value) ? null : value);
+  }
+  return state;
+}
+
+/** The DML and the checks after it, from walking the Flow for the record's state. */
+type FlowChecks = {
+  /** The DML (and its startTest/stopTest), wrapped to expect a custom error when one is certain. */
+  dml: string[];
+  /** Requery and assertions; empty when the save is expected to fail. */
+  after: string[];
+};
+
+function errorText(message: string | undefined): string | undefined {
+  // Merge fields in the message vary per record; match the text before the first one.
+  const fixed = message?.split('{!')[0].trim();
+  return fixed ? fixed : undefined;
+}
+
+/**
+ * Turns a walk of the Flow into the test's DML and checks: an expected custom error, assertions
+ * on the fields the Flow is certain to set, and commented assertions for fields it sets only on
+ * a branch the test can't predict. Undefined when the walk gives nothing to check.
+ */
+function flowChecks(walk: FlowWalk, object: string, variable: string, dml: string, i2: string): FlowChecks | undefined {
+  const i3 = INDENT.repeat(3);
+  if (walk.customError) {
+    const message = errorText(walk.customError.message);
+    return {
+      dml: [
+        `${i2}Test.startTest();`,
+        `${i2}try {`,
+        `${i3}${dml} ${variable};`,
+        `${i3}Assert.fail('${escapeApexString(walk.customError.element)} should block this save with a custom error');`,
+        `${i2}} catch (DmlException e) {`,
+        message
+          ? `${i3}Assert.isTrue(e.getMessage().contains('${escapeApexString(message)}'), e.getMessage());`
+          : `${i3}Assert.isNotNull(e.getMessage(), 'The custom error should have a message');`,
+        `${i2}}`,
+        `${i2}Test.stopTest();`,
+      ],
+      after: [],
+    };
+  }
+
+  const maybe = new Set((walk.undecided?.outcomes ?? []).flatMap((o) => o.writes.map((w) => w.field)));
+  const certain = new Map<string, FieldWrite>();
+  for (const write of walk.writes) certain.set(write.field, write);
+  const lines: string[] = [];
+  for (const [field, write] of certain) {
+    const value = write.value.apexValue;
+    if (value !== undefined && !maybe.has(field)) {
+      lines.push(
+        `${i2}Assert.areEqual(${value}, result.${field}, '${escapeApexString(write.element)} should set ${field}');`,
+      );
+    } else {
+      const reason = maybe.has(field) ? ', and a later branch may change it' : '';
+      lines.push(
+        `${i2}// TODO: ${write.element} sets ${field} to ${write.value.rawValue ?? 'a value'}${reason}; assert it`,
+      );
+    }
+  }
+  for (const outcome of walk.undecided?.outcomes ?? []) {
+    lines.push(`${i2}// TODO: when ${walk.undecided?.element} takes "${outcome.label}", the Flow also:`);
+    for (const write of outcome.writes) {
+      lines.push(
+        write.value.apexValue === undefined
+          ? `${i2}//   sets ${write.field} to ${write.value.rawValue ?? 'a value'} (${write.element})`
+          : `${i2}// Assert.areEqual(${write.value.apexValue}, result.${write.field}, '${escapeApexString(write.element)} should set ${write.field}');`,
+      );
+    }
+    if (outcome.customError) lines.push(`${i2}//   can block the save with a custom error`);
+  }
+  if (lines.length === 0) return undefined;
+
+  const fields = [...new Set([...certain.keys(), ...maybe])];
+  return {
+    dml: [`${i2}Test.startTest();`, `${i2}${dml} ${variable};`, `${i2}Test.stopTest();`],
+    after: [
+      `${i2}${object} result = [SELECT Id, ${fields.join(', ')} FROM ${object} WHERE Id = :${variable}.Id];`,
+      ...lines,
+    ],
+  };
 }
 
 function newRecord(
@@ -225,6 +334,15 @@ function newRecord(
   return lines;
 }
 
+/** Every field the Flow can write on the triggering record, anywhere in its elements. */
+function fieldsTheFlowWrites(flow: FlowMetadata): Set<string> {
+  return new Set(
+    Object.values(flow.graph?.nodes ?? {}).flatMap((node) =>
+      node.kind === 'write' ? node.writes.map((w) => w.field) : [],
+    ),
+  );
+}
+
 function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, values: CriteriaValues): string[] {
   const object = flow.object as string;
   // A fixed name avoids Apex reserved words (`case`, `order`, `group`) that object names produce.
@@ -232,28 +350,38 @@ function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, values: C
   const { settable, handled } = resolveCriteria(flow.filters, object, values, 'insert');
   const todos = criteriaTodos(flow, handled);
   const i2 = INDENT.repeat(2);
-  const requery = (assertion: string): string[] => [
-    `${i2}${object} result = [SELECT Id FROM ${object} WHERE Id = :${variable}.Id];`,
-    `${i2}// TODO: query and assert the fields this Flow sets`,
-    `${i2}${assertion}`,
-  ];
+  const nullWhenUnset = values.nullWhenUnset[object] ?? [];
   const method = (name: string, body: string[]): string[] => [
     `${INDENT}@IsTest`,
     `${INDENT}static void ${name}() {`,
     ...body,
     `${INDENT}}`,
   ];
+  const defaultChecks = (dml: string, assertion: string): FlowChecks => ({
+    dml: [`${i2}Test.startTest();`, `${i2}${dml} ${variable};`, `${i2}Test.stopTest();`],
+    after: [
+      `${i2}${object} result = [SELECT Id FROM ${object} WHERE Id = :${variable}.Id];`,
+      `${i2}// TODO: query and assert the fields this Flow sets`,
+      `${i2}${assertion}`,
+    ],
+  });
+  /** Checks from walking the Flow, when the test is sure to meet its entry criteria. */
+  const checksFor = (criteriaMet: boolean, state: FieldState, dml: string): FlowChecks | undefined =>
+    criteriaMet && flow.graph ? flowChecks(walkFlow(flow.graph, state), object, variable, dml, i2) : undefined;
 
-  const createBody = (): string[] => [
-    ...newRecord(object, variable, recordFields(object, settable, required), i2, required),
-    ...todos.map((t) => `${i2}${t}`),
-    '',
-    `${i2}Test.startTest();`,
-    `${i2}insert ${variable};`,
-    `${i2}Test.stopTest();`,
-    '',
-    ...requery(`Assert.isNotNull(result.Id, 'The ${object} should be saved');`),
-  ];
+  const createBody = (): string[] => {
+    const fields = recordFieldValues(object, settable, required);
+    const checks =
+      checksFor(todos.length === 0, fieldState(fields, nullWhenUnset), 'insert') ??
+      defaultChecks('insert', `Assert.isNotNull(result.Id, 'The ${object} should be saved');`);
+    return [
+      ...newRecord(object, variable, recordFields(object, settable, required), i2, required),
+      ...todos.map((t) => `${i2}${t}`),
+      '',
+      ...checks.dml,
+      ...(checks.after.length > 0 ? ['', ...checks.after] : []),
+    ];
+  };
 
   const updateBody = (): string[] => {
     const update = resolveCriteria(flow.filters, object, values, 'update');
@@ -262,32 +390,51 @@ function recordMethods(flow: FlowMetadata, required: RequiredFieldMap, values: C
       ...newRecord(object, variable, recordFields(object, [], required), i2, required),
       `${i2}insert ${variable};`,
       '',
-      `${i2}Test.startTest();`,
     ];
     const inserted = knownRequired(object, required) ?? {};
+    const fields = recordFieldValues(object, [], required);
+    const changes: string[] = [];
     // Skip values the insert already set: assigning them again wouldn't change the record.
     for (const { field, apexValue } of update.settable) {
-      if (inserted[field] !== apexValue) lines.push(`${i2}${variable}.${field} = ${apexValue};`);
+      fields.set(field, apexValue);
+      if (inserted[field] !== apexValue) changes.push(`${i2}${variable}.${field} = ${apexValue};`);
     }
-    lines.push(...updateTodos.map((t) => `${i2}${t}`));
+    changes.push(...updateTodos.map((t) => `${i2}${t}`));
     if (update.settable.length === 0 && updateTodos.length === 0)
-      lines.push(`${i2}// TODO: change the fields this Flow reacts to`);
-    lines.push(`${i2}update ${variable};`, `${i2}Test.stopTest();`, '');
-    return [...lines, ...requery(`Assert.isNotNull(result.Id, 'The ${object} should still exist');`)];
+      changes.push(`${i2}// TODO: change the fields this Flow reacts to`);
+    // When the Flow also runs on create, the insert may already have set the fields it writes.
+    const unknown = flow.recordTriggerType === 'CreateAndUpdate' ? fieldsTheFlowWrites(flow) : new Set<string>();
+    const changesField = update.settable.some(({ field, apexValue }) => inserted[field] !== apexValue);
+    const checks =
+      checksFor(updateTodos.length === 0 && changesField, fieldState(fields, nullWhenUnset, unknown), 'update') ??
+      defaultChecks('update', `Assert.isNotNull(result.Id, 'The ${object} should still exist');`);
+    const [start, ...dml] = checks.dml;
+    return [...lines, start, ...changes, ...dml, ...(checks.after.length > 0 ? ['', ...checks.after] : [])];
   };
 
-  const deleteBody = (): string[] => [
-    ...newRecord(object, variable, recordFields(object, settable, required), i2, required),
-    ...todos.map((t) => `${i2}${t}`),
-    `${i2}insert ${variable};`,
-    '',
-    `${i2}Test.startTest();`,
-    `${i2}delete ${variable};`,
-    `${i2}Test.stopTest();`,
-    '',
-    `${i2}// TODO: assert what this Flow does when the record is deleted`,
-    `${i2}Assert.areEqual(0, [SELECT COUNT() FROM ${object} WHERE Id = :${variable}.Id], 'The ${object} should be deleted');`,
-  ];
+  const deleteBody = (): string[] => {
+    const fields = recordFieldValues(object, settable, required);
+    const walk = todos.length === 0 && flow.graph ? walkFlow(flow.graph, fieldState(fields, nullWhenUnset)) : undefined;
+    const blocked = walk?.customError
+      ? flowChecks({ writes: [], customError: walk.customError }, object, variable, 'delete', i2)
+      : undefined;
+    return [
+      ...newRecord(object, variable, recordFields(object, settable, required), i2, required),
+      ...todos.map((t) => `${i2}${t}`),
+      `${i2}insert ${variable};`,
+      '',
+      ...(blocked
+        ? blocked.dml
+        : [
+            `${i2}Test.startTest();`,
+            `${i2}delete ${variable};`,
+            `${i2}Test.stopTest();`,
+            '',
+            `${i2}// TODO: assert what this Flow does when the record is deleted`,
+            `${i2}Assert.areEqual(0, [SELECT COUNT() FROM ${object} WHERE Id = :${variable}.Id], 'The ${object} should be deleted');`,
+          ]),
+    ];
+  };
 
   switch (flow.recordTriggerType) {
     case 'Update':
@@ -421,6 +568,8 @@ export type GenerateOptions = {
   changedValues?: RequiredFieldMap;
   /** The object each lookup field points to, per object. Fills required and `IsNull false` lookups. */
   lookups?: Record<string, Record<string, string>>;
+  /** Fields that stay empty when a test doesn't set them, per object. Lets assertions follow the Flow's decisions. */
+  nullWhenUnset?: Record<string, string[]>;
 };
 
 type ResolvedLookups = {
@@ -491,6 +640,7 @@ export function generateApexTest(source: FlowMetadata, options: GenerateOptions 
   const values: CriteriaValues = {
     fieldValues: lookups.fieldValues,
     changedValues: options.changedValues ?? {},
+    nullWhenUnset: options.nullWhenUnset ?? {},
   };
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);
