@@ -150,6 +150,8 @@ export type ObjectFields = {
   changedValues: RequiredFieldMap;
   /** The object each lookup field points to, per object. Only lookups to a single object are listed. */
   lookups: Record<string, Record<string, string>>;
+  /** Fields that stay empty when a test doesn't set them (no default value), per object. */
+  nullWhenUnset: Record<string, string[]>;
 };
 
 export const emptyObjectFields = (): ObjectFields => ({
@@ -157,6 +159,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   fieldValues: {},
   changedValues: {},
   lookups: {},
+  nullWhenUnset: {},
 });
 
 /** Lookup targets a test points at an existing record instead of inserting one. */
@@ -179,6 +182,24 @@ const NOT_INSERTABLE = new Set([
 /** Whether a generated test can insert a record of `object` to fill a lookup to it. */
 export const canInsertParent = (object: string): boolean =>
   !NOT_INSERTABLE.has(object) && !(object in EXISTING_RECORD_IDS);
+
+/**
+ * Fields a new record leaves empty unless the test sets them: createable, nillable, and with no
+ * default value. Lets a test know how the Flow's decisions read the fields it doesn't set.
+ */
+export function nullWhenUnsetFields(fields: DescribeField[]): string[] {
+  return fields
+    .filter(
+      (field) =>
+        field.createable &&
+        field.nillable &&
+        !field.defaultedOnCreate &&
+        !field.calculated &&
+        !field.autoNumber &&
+        !(field.picklistValues ?? []).some((value) => value.defaultValue),
+    )
+    .map((field) => field.name);
+}
 
 /** Createable lookups to exactly one object (polymorphic lookups like `WhatId` are left out). */
 export function lookupTargets(fields: DescribeField[]): Record<string, string> {
@@ -212,6 +233,7 @@ export async function loadObjectFields(
       into.fieldValues[object] = settableFieldValues(fields);
       into.changedValues[object] = changedFieldValues(fields);
       into.lookups[object] = lookupTargets(fields);
+      into.nullWhenUnset[object] = nullWhenUnsetFields(fields);
     }
   }
   return into;

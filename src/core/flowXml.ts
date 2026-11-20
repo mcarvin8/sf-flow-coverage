@@ -1,62 +1,24 @@
 import { XMLParser } from 'fast-xml-parser';
 
+import { GRAPH_ARRAY_PATHS, parseFlowGraph } from './flowGraph.js';
+import { asArray, asRecord, parseFlowValue, text, type XmlRecord } from './flowValues.js';
 import type { FlowFilter, FlowMetadata, FlowVariable } from './types.js';
 
-type XmlRecord = Record<string, unknown>;
+export { escapeApexString } from './flowValues.js';
 
 const parser = new XMLParser({
   ignoreAttributes: true,
   parseTagValue: false,
   trimValues: true,
-  isArray: (_name, jpath) => ['Flow.variables', 'Flow.start.filters'].includes(String(jpath)),
+  isArray: (_name, jpath) => ['Flow.variables', 'Flow.start.filters', ...GRAPH_ARRAY_PATHS].includes(String(jpath)),
 });
-
-function text(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return undefined;
-}
-
-function asRecord(value: unknown): XmlRecord | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as XmlRecord) : undefined;
-}
-
-function asArray(value: unknown): XmlRecord[] {
-  return Array.isArray(value) ? value.filter((v): v is XmlRecord => !!asRecord(v)) : [];
-}
-
-export function escapeApexString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, '\\n');
-}
-
-function parseFilterValue(value: XmlRecord | undefined): Pick<FlowFilter, 'apexValue' | 'rawValue'> {
-  if (!value) return {};
-  const stringValue = text(value.stringValue);
-  if (stringValue !== undefined) return { apexValue: `'${escapeApexString(stringValue)}'`, rawValue: stringValue };
-  const booleanValue = text(value.booleanValue);
-  if (booleanValue !== undefined)
-    return { apexValue: booleanValue === 'true' ? 'true' : 'false', rawValue: booleanValue };
-  const numberValue = text(value.numberValue);
-  if (numberValue !== undefined && !Number.isNaN(Number(numberValue))) {
-    return { apexValue: numberValue, rawValue: numberValue };
-  }
-  const dateValue = text(value.dateValue);
-  if (dateValue !== undefined)
-    return { apexValue: `Date.valueOf('${escapeApexString(dateValue)}')`, rawValue: dateValue };
-  const dateTimeValue = text(value.dateTimeValue);
-  const dateTime = dateTimeValue && /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/.exec(dateTimeValue);
-  if (dateTime) return { apexValue: `Datetime.valueOfGmt('${dateTime[1]} ${dateTime[2]}')`, rawValue: dateTimeValue };
-  const raw = text(value.elementReference) ?? dateTimeValue;
-  return raw === undefined ? {} : { rawValue: raw };
-}
 
 function parseFilters(start: XmlRecord): FlowFilter[] {
   return asArray(start.filters).flatMap((filter) => {
     const field = text(filter.field);
     const operator = text(filter.operator);
     if (!field || !operator) return [];
-    return [{ field, operator, ...parseFilterValue(asRecord(filter.value)) }];
+    return [{ field, operator, ...parseFlowValue(asRecord(filter.value)) }];
   });
 }
 
@@ -100,5 +62,6 @@ export function parseFlowXml(name: string, xml: string): FlowMetadata {
     filterLogic: text(start.filterLogic),
     filterFormula: text(start.filterFormula),
     variables: parseVariables(flow),
+    graph: parseFlowGraph(flow),
   };
 }

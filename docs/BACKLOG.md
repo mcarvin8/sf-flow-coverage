@@ -44,9 +44,12 @@ Required and `IsNull false` lookups get a parent record (or the running user, or
 
 ### 7. Real assertions
 
-Read the Flow's record updates and assignments on `$Record`, then assert those fields after the DML, replacing the placeholder `Assert.isNotNull`. Of everything here, this makes generated tests most useful.
+Record-triggered tests now follow the Flow's elements: they assert the `$Record` fields the Flow is certain to set, expect a custom error the Flow is certain to raise, and comment out assertions for decision outcomes they can't predict. Next steps:
 
-Flows with a Custom Error element need a different test: meeting the entry criteria makes the save fail on purpose (for example "Set the install date before closing this installation"), so today's generated test fails. Generate a test that expects the `DmlException` and asserts the error message, and, where the Flow's decisions show which fields avoid the error, a second test that sets them and expects the save to succeed.
+- When a test expects a custom error, add a second test that sets the fields the decision checks so the save succeeds.
+- Decide more decisions: picklist defaults (only safe when the object has no record types that change them), checkbox defaults, and formula resources.
+- Assert records the Flow creates (for example a Task) and updates to related records.
+- Assert output variables of autolaunched Flows started with `Flow.Interview`.
 
 ## CI and reporting
 

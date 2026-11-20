@@ -264,8 +264,12 @@ DESCRIPTION
   record-triggered Flows get a record built from the trigger object and entry criteria, autolaunched Flows are started
   with Flow.Interview and their input variables, and platform event Flows publish the event. When a target org is
   available (--target-org or a default org), the command describes each object the test creates and fills in its
-  required fields and any fields the entry criteria require to be set (IsNull false). The generated tests have TODOs for
-  anything it can't fill in and placeholder assertions.
+  required fields, the fields the entry criteria need, and parent records for required lookups.
+
+  For record-triggered Flows, the command follows the Flow's elements for the record the test creates. It asserts the
+  fields the Flow is certain to set, and when the Flow is certain to stop the save with a custom error, the test expects
+  that error. Fields the Flow sets only on a decision outcome the command can't predict get commented-out assertions.
+  The generated tests have TODOs for anything the command can't fill in.
 
   Only Apex tests count toward deploying Flows as active, so this command generates Apex, not Flow Builder tests.
 
