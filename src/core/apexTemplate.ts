@@ -92,6 +92,10 @@ type CriteriaValues = {
   lookups: Record<string, Record<string, string>>;
   /** Fields the criteria need on parent records, per parent object; filled while generating. */
   parentFields: Map<string, Map<string, string>>;
+  /** Fields a test can't set at all, per object. */
+  readOnlyFields: Record<string, string[]>;
+  /** Fields a test can set on insert but not change in an update, per object. */
+  createOnlyFields: Record<string, string[]>;
 };
 
 /** What the criteria solver knows about the record an insert or an update test builds. */
@@ -110,6 +114,9 @@ function criteriaContext(
     relationships: values.relationships[object] ?? {},
     lookups: values.lookups[object] ?? {},
     parentFieldValues: (parent) => values.fieldValues[parent] ?? {},
+    writable: (target, field, when) =>
+      !values.readOnlyFields[target]?.includes(field) &&
+      (when === 'insert' || !values.createOnlyFields[target]?.includes(field)),
   };
 }
 
@@ -672,6 +679,10 @@ export type GenerateOptions = {
   relationships?: Record<string, Record<string, string>>;
   /** How many record types each object has, including Master. Lets record type lookups be filled. */
   recordTypes?: Record<string, number>;
+  /** Fields a test can't set at all (formula, auto-number), per object. Criteria on them stay TODOs. */
+  readOnlyFields?: Record<string, string[]>;
+  /** Fields a test can set on insert but not change in an update, per object. Update tests set them in the insert. */
+  createOnlyFields?: Record<string, string[]>;
 };
 
 type ResolvedLookups = {
@@ -802,6 +813,8 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     relationships: options.relationships ?? {},
     lookups: options.lookups ?? {},
     parentFields: new Map(),
+    readOnlyFields: options.readOnlyFields ?? {},
+    createOnlyFields: options.createOnlyFields ?? {},
   };
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);

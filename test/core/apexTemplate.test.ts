@@ -567,6 +567,25 @@ describe('generateApexTest entry-criteria operators', () => {
       expect(test.body).not.toContain('TODO: entry criteria');
     });
 
+    it('never assigns a field the test cannot write', () => {
+      const flow = formulaFlow(
+        'AND({!$Record.Region_Formula__c} = "West", NOT(ISBLANK({!$Record.Project__c})), {!$Record.Stage__c} = "Open")',
+        'Update',
+      );
+      const test = generateApexTest(flow, {
+        fieldValues: { Job__c: { Project__c: "'a01000000000001'" } },
+        readOnlyFields: { Job__c: ['Region_Formula__c'] },
+        createOnlyFields: { Job__c: ['Project__c'] },
+      });
+      expect(test.body).not.toContain('Region_Formula__c =');
+      expect(test.body).toContain('// TODO: entry criteria formula term: {!$Record.Region_Formula__c} = "West"');
+      expect(test.body).toContain(
+        "        Job__c testRecord = new Job__c(\n            Project__c = 'a01000000000001'\n        );",
+      );
+      expect(test.body).not.toContain('testRecord.Project__c =');
+      expect(test.body).toContain("testRecord.Stage__c = 'Open';");
+    });
+
     it('meets an OR formula through one branch, and leaves a formula it cannot read as one TODO', () => {
       expect(generateApexTest(formulaFlow('OR({!$Record.A__c}, {!$Record.B__c})')).body).toContain('A__c = true');
       const test = generateApexTest(formulaFlow('OR({!$Record.A__c} ~ 1)', 'Delete'));
