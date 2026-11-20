@@ -140,7 +140,7 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
       ]);
       expect(result.passed).toBe(false);
       expect(result.minElementCoverage).toBe(50);
-      expect(logged()).toContain('Flow coverage gate failed: 1 Flow(s) need Apex test coverage.');
+      expect(logged()).toContain('Flow coverage gate failed for 1 Flow(s). See the Reason column.');
       expect(process.exitCode).toBe(1);
     });
 

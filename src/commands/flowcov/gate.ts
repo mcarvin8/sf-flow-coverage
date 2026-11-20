@@ -81,7 +81,7 @@ export default class FlowcovGate extends SfCommand<GateResult> {
       this.logSuccess(`Flow coverage gate passed for ${result.flows.length} Flow(s).`);
     } else {
       const failed = result.flows.filter((f) => f.status === 'fail').length;
-      this.warn(`Flow coverage gate failed: ${failed} Flow(s) need Apex test coverage.`);
+      this.warn(`Flow coverage gate failed for ${failed} Flow(s). See the Reason column.`);
       process.exitCode = 1;
     }
     return result;
