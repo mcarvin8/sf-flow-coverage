@@ -8,6 +8,8 @@ export type GateCandidate = {
   flowName: string;
   path?: string;
   metadata?: FlowMetadata;
+  /** Why the changed file couldn't be read as a Flow; the gate fails it. */
+  error?: string;
 };
 
 /** Reads the Flows changed between `from` and `to` (PR semantics: merge base of `from` to `to`). */
@@ -17,7 +19,11 @@ export async function collectChangedFlows(cwd: string, from: string, to: string)
   for (const path of files) {
     const flowName = flowNameFromPath(path) as string;
     const xml = await showFileAtRevision(cwd, to, path);
-    candidates.push({ flowName, path, metadata: parseFlowXml(flowName, xml) });
+    try {
+      candidates.push({ flowName, path, metadata: parseFlowXml(flowName, xml) });
+    } catch (error) {
+      candidates.push({ flowName, path, error: (error as Error).message });
+    }
   }
   return candidates;
 }
@@ -50,6 +56,16 @@ export async function evaluateGate(options: GateOptions): Promise<GateResult> {
   const toCheck: GateCandidate[] = [];
 
   for (const candidate of options.candidates) {
+    if (candidate.error) {
+      results.push({
+        flowName: candidate.flowName,
+        path: candidate.path,
+        status: 'fail',
+        reason: candidate.error,
+        tests: [],
+      });
+      continue;
+    }
     const reason = skipReason(candidate.metadata);
     if (reason) results.push({ flowName: candidate.flowName, path: candidate.path, status: 'skip', reason, tests: [] });
     else toCheck.push(candidate);
