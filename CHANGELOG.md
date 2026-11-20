@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.2.0...v0.3.0) (2026-11-20)
+
+
+### Features
+
+* **gate:** compare changed Flows with the org version via --content-check ([#9](https://github.com/mcarvin8/sf-flow-coverage/issues/9)) ([841c417](https://github.com/mcarvin8/sf-flow-coverage/commit/841c4170e361a0669727b851823ecfe4d00b9a0d))
+* **gate:** fail Flows whose org version was likely deployed inactive ([#7](https://github.com/mcarvin8/sf-flow-coverage/issues/7)) ([5564801](https://github.com/mcarvin8/sf-flow-coverage/commit/55648016d9be109bdc853ef300d70d6c33bb117e))
+* **scaffold:** assert what record-triggered Flows do ([#13](https://github.com/mcarvin8/sf-flow-coverage/issues/13)) ([9ef29b5](https://github.com/mcarvin8/sf-flow-coverage/commit/9ef29b5245b6f25d660005231b3e94907c32a2ed))
+* **scaffold:** insert parent records for required and criteria lookups ([#12](https://github.com/mcarvin8/sf-flow-coverage/issues/12)) ([cc57296](https://github.com/mcarvin8/sf-flow-coverage/commit/cc57296d58439531b5f2f2963e2da02ddc158484))
+* **scaffold:** meet comparison, string, and IsChanged entry criteria ([#10](https://github.com/mcarvin8/sf-flow-coverage/issues/10)) ([5451dbb](https://github.com/mcarvin8/sf-flow-coverage/commit/5451dbb66921d59ad00812ed18c060dfeb1c992e))
+* **scaffold:** meet simple entry-criteria formulas ([#11](https://github.com/mcarvin8/sf-flow-coverage/issues/11)) ([1a5b8e4](https://github.com/mcarvin8/sf-flow-coverage/commit/1a5b8e4257462e51092077d9746dcc6ad3af1e9d))
+
 ## [0.2.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.1.0...v0.2.0) (2026-11-20)
 
 
