@@ -243,3 +243,27 @@ describe('OrgCoverageSource.getFlowCoverage', () => {
     expect(missing.calls).toHaveLength(1);
   });
 });
+
+describe('OrgCoverageSource.getFlowFingerprint', () => {
+  it('fingerprints the version metadata, one version per query', async () => {
+    const { query, calls } = fakeQuery({
+      Flow: [{ Metadata: { processType: 'AutoLaunchedFlow', decisions: [{ name: 'D' }] } }],
+    });
+    expect(await new OrgCoverageSource(query).getFlowFingerprint(A)).toEqual({
+      processType: 'AutoLaunchedFlow',
+      filters: [],
+      elements: ['decisions:D'],
+    });
+    expect(calls).toEqual([`SELECT Metadata FROM Flow WHERE Id = '${A}'`]);
+  });
+
+  it('returns undefined when the version or its metadata cannot be read', async () => {
+    expect(await new OrgCoverageSource(fakeQuery({ Flow: [] }).query).getFlowFingerprint(A)).toBeUndefined();
+    expect(
+      await new OrgCoverageSource(fakeQuery({ Flow: [{ Metadata: null }] }).query).getFlowFingerprint(A),
+    ).toBeUndefined();
+    expect(
+      await new OrgCoverageSource(fakeQuery({ Flow: new Error('INVALID_FIELD') }).query).getFlowFingerprint(A),
+    ).toBeUndefined();
+  });
+});

@@ -112,13 +112,16 @@ Require Apex test coverage for every Flow a pull request changes.
 ```
 USAGE
   $ sf flowcov gate -o <value> [--json] [--flags-dir <value>] [--api-version <value>] [--from <value> | --flow
-    <value>...] [--to <value>] [-d <value>] [--min-element-coverage <value>]
+    <value>...] [--to <value>] [-d <value>] [--min-element-coverage <value>] [--content-check warn|fail|off]
 
 FLAGS
   -d, --project-dir=<value>           [default: .] Git repository to read changed Flows from.
   -o, --target-org=<value>            (required) Username or alias of the target org. Not required if the `target-org`
                                       configuration variable is already set.
       --api-version=<value>           Override the api version used for api requests made by this command
+      --content-check=<option>        [default: warn] What to do when a changed Flow's content differs from the org's
+                                      version.
+                                      <options: warn|fail|off>
       --flow=<value>...               Flow API name to check. Use instead of --from to skip git.
       --from=<value>                  Git ref the pull request merges into (the gate compares from the merge base of
                                       this ref).
@@ -144,6 +147,11 @@ DESCRIPTION
   latest version. Both usually mean the branch was deployed inactive, so the org's coverage doesn't belong to the
   version in the pull request.
 
+  With --from, the gate also compares each changed Flow at --to with the org's version: process type, start trigger and
+  entry criteria, and the names of its elements and resources. A difference usually means the branch wasn't deployed to
+  the org. By default this is a warning; use --content-check to fail instead, or to skip the comparison. The comparison
+  doesn't look inside elements, so it can miss a change that only edits an existing element.
+
   Exits with code 1 when any Flow fails.
 
 EXAMPLES
@@ -155,9 +163,19 @@ EXAMPLES
 
     $ sf flowcov gate --target-org ci-sandbox --from origin/main --min-element-coverage 60
 
+  Fail when the org runs a different version of a changed Flow than the branch:
+
+    $ sf flowcov gate --target-org ci-sandbox --from origin/main --content-check fail
+
   Check named Flows without git:
 
     $ sf flowcov gate --target-org ci-sandbox --flow Account_After_Save --flow Close_Cases
+
+FLAG DESCRIPTIONS
+  --content-check=warn|fail|off  What to do when a changed Flow's content differs from the org's version.
+
+    "warn" prints a warning, "fail" fails a Flow that would otherwise pass, and "off" skips the comparison (and its one
+    Tooling API query per Flow). Only applies with --from.
 ```
 
 _See code: [src/commands/flowcov/gate.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/gate.ts)_

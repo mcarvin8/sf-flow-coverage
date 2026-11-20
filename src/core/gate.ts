@@ -1,13 +1,16 @@
+import { compareFingerprints, type FlowFingerprint, fingerprintFromXml } from './flowFingerprint.js';
 import { flowNameFromPath, isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
 import { getChangedFlowFiles, showFileAtRevision } from './git.js';
-import type { CoverageSource, FlowMetadata, GateFlowResult, GateResult } from './types.js';
+import type { ContentCheck, CoverageSource, FlowCoverage, FlowMetadata, GateFlowResult, GateResult } from './types.js';
 
 /** A Flow the gate should check. `metadata` is present when it came from a changed file. */
 export type GateCandidate = {
   flowName: string;
   path?: string;
   metadata?: FlowMetadata;
+  /** Content fingerprint of the changed file, compared with the org's version. */
+  fingerprint?: FlowFingerprint;
   /** Why the changed file couldn't be read as a Flow; the gate fails it. */
   error?: string;
 };
@@ -20,7 +23,7 @@ export async function collectChangedFlows(cwd: string, from: string, to: string)
     const flowName = flowNameFromPath(path) as string;
     const xml = await showFileAtRevision(cwd, to, path);
     try {
-      candidates.push({ flowName, path, metadata: parseFlowXml(flowName, xml) });
+      candidates.push({ flowName, path, metadata: parseFlowXml(flowName, xml), fingerprint: fingerprintFromXml(xml) });
     } catch (error) {
       candidates.push({ flowName, path, error: (error as Error).message });
     }
@@ -33,7 +36,36 @@ export type GateOptions = {
   candidates: GateCandidate[];
   /** Minimum element coverage per Flow, 0-100. 0 means any covering test is enough. */
   minElementCoverage?: number;
+  /** What to do when the org's version differs from the changed file. Defaults to `warn`. */
+  contentCheck?: ContentCheck;
 };
+
+function coverageOutcome(flow: FlowCoverage, minElementCoverage: number): Pick<GateFlowResult, 'status' | 'reason'> {
+  if (!flow.covered) {
+    return { status: 'fail', reason: `No Apex test runs version ${flow.versionNumber ?? '?'} of this Flow.` };
+  }
+  if (flow.elementCoveragePercent < minElementCoverage) {
+    return {
+      status: 'fail',
+      reason: `Element coverage ${flow.elementCoveragePercent}% is below the required ${minElementCoverage}%.`,
+    };
+  }
+  return { status: 'pass', reason: `Covered by ${flow.tests.length} test method(s).` };
+}
+
+/** Describes how the org's version differs from the changed file, or undefined when it matches or can't be read. */
+async function contentMismatch(
+  source: CoverageSource,
+  candidate: GateCandidate,
+  flow: FlowCoverage,
+): Promise<string | undefined> {
+  if (!candidate.fingerprint || !source.getFlowFingerprint) return undefined;
+  const orgFingerprint = await source.getFlowFingerprint(flow.flowVersionId);
+  if (!orgFingerprint) return undefined;
+  const differences = compareFingerprints(candidate.fingerprint, orgFingerprint);
+  if (differences.length === 0) return undefined;
+  return `The org's version ${flow.versionNumber ?? '?'} differs from ${candidate.path ?? 'source'} (${differences.join('; ')}), so coverage may be stale. Deploy the branch, run Apex tests, then rerun the gate.`;
+}
 
 function skipReason(metadata: FlowMetadata | undefined): string | undefined {
   if (!metadata) return undefined;
@@ -50,10 +82,13 @@ function skipReason(metadata: FlowMetadata | undefined): string | undefined {
  * Requires coverage for each changed Flow, not just the org-wide total Salesforce checks.
  * Coverage is read from the org, so run this after deploying the branch and running Apex tests.
  * Fails a Flow whose org versions suggest the branch was deployed inactive, since the coverage
- * read would then belong to an older version (or to none).
+ * read would then belong to an older version (or to none). When a candidate has a fingerprint,
+ * also compares it with the org's version and warns (or fails) when they differ, which catches
+ * a branch that was never deployed.
  */
 export async function evaluateGate(options: GateOptions): Promise<GateResult> {
   const minElementCoverage = options.minElementCoverage ?? 0;
+  const contentCheck = options.contentCheck ?? 'warn';
   const results: GateFlowResult[] = [];
   const toCheck: GateCandidate[] = [];
 
@@ -112,20 +147,16 @@ export async function evaluateGate(options: GateOptions): Promise<GateResult> {
         status: 'fail',
         reason: `The org's active version ${flow.versionNumber ?? '?'} is older than its latest version ${flow.latestVersionNumber ?? '?'}, which is inactive, so coverage may be stale. Activate the latest version, run Apex tests, then rerun the gate.`,
       });
-    } else if (!flow.covered) {
-      results.push({
-        ...details,
-        status: 'fail',
-        reason: `No Apex test runs version ${flow.versionNumber ?? '?'} of this Flow.`,
-      });
-    } else if (flow.elementCoveragePercent < minElementCoverage) {
-      results.push({
-        ...details,
-        status: 'fail',
-        reason: `Element coverage ${flow.elementCoveragePercent}% is below the required ${minElementCoverage}%.`,
-      });
     } else {
-      results.push({ ...details, status: 'pass', reason: `Covered by ${flow.tests.length} test method(s).` });
+      const result: GateFlowResult = { ...details, ...coverageOutcome(flow, minElementCoverage) };
+      const mismatch = contentCheck === 'off' ? undefined : await contentMismatch(options.source, candidate, flow);
+      if (mismatch && contentCheck === 'fail' && result.status === 'pass') {
+        result.status = 'fail';
+        result.reason = mismatch;
+      } else if (mismatch) {
+        result.warnings = [mismatch];
+      }
+      results.push(result);
     }
   }
 

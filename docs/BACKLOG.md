@@ -10,9 +10,9 @@ Suggested first picks: [Warn when coverage is missing entirely](#1-warn-when-cov
 
 If no active Flow version in the org has any `FlowTestCoverage` rows, the tests were most likely run without `--code-coverage`. Today `readiness` and `gate` just report 0%. Print a warning that names the fix (`sf apex run test --code-coverage`).
 
-### 2. Catch version mismatches in the gate
+### 2. Deeper version comparison in the gate
 
-The gate checks the org's active Flow version, which may not be the version in the pull request. It already fails when the org has no active version or a newer inactive one (the branch was deployed inactive). It still passes on stale coverage when the branch wasn't deployed at all. Compare a fingerprint of the org version's `Metadata` (process type, start trigger, sorted element types and names) with the file at `--to`, and warn when they differ. Don't hash the whole file: the Tooling API's JSON and the source XML differ in defaults and ordering.
+The gate fails when the org has no active version or a newer inactive one, and `--content-check` compares process type, start trigger, entry criteria, and element names with the file at `--to`. It still misses a change that only edits an existing element (a new decision condition, a changed assignment value). Extend the fingerprint into element bodies, normalizing the Tooling API's JSON and the source XML the same way (defaults, nulls, value types, ordering) so matching versions don't warn.
 
 ### 3. Show the deploy-as-active setting in readiness
 

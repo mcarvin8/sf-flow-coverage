@@ -8,11 +8,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import FlowcovGate from '../../../src/commands/flowcov/gate.js';
 import FlowcovReadiness from '../../../src/commands/flowcov/readiness.js';
 import FlowcovScaffold from '../../../src/commands/flowcov/scaffold.js';
+import type { FlowFingerprint } from '../../../src/core/flowFingerprint.js';
 import type { FlowCoverage } from '../../../src/core/types.js';
 import { flowXml, TempGitRepo } from '../../gitRepo.js';
 import { coverage, FIXTURE_PROJECT } from '../../helpers.js';
 
 const orgFlows = vi.hoisted(() => ({ value: [] as FlowCoverage[] }));
+const orgFingerprints = vi.hoisted(() => ({ value: {} as Record<string, FlowFingerprint> }));
 
 vi.mock('../../../src/core/orgCoverageSource.js', () => ({
   OrgCoverageSource: class {
@@ -21,6 +23,9 @@ vi.mock('../../../src/core/orgCoverageSource.js', () => ({
     }
     public async getFlowCoverage(names: string[]): Promise<FlowCoverage[]> {
       return orgFlows.value.filter((f) => names.includes(f.flowName));
+    }
+    public async getFlowFingerprint(id: string): Promise<FlowFingerprint | undefined> {
+      return orgFingerprints.value[id];
     }
   },
 }));
@@ -142,6 +147,27 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
       expect(result.minElementCoverage).toBe(50);
       expect(logged()).toContain('Flow coverage gate failed for 1 Flow(s). See the Reason column.');
       expect(process.exitCode).toBe(1);
+    });
+
+    it('warns when a changed Flow differs from the org version, and fails with --content-check fail', async () => {
+      const good = coverage('Good');
+      orgFlows.value = [good, coverage('Bad')];
+      orgFingerprints.value = {
+        [good.flowVersionId]: { processType: 'AutoLaunchedFlow', filters: [], elements: ['decisions:Old'] },
+      };
+      const args = ['--target-org', testOrg.username, '--from', 'main', '--to', 'feature', '--project-dir', repo.dir];
+
+      const warned = await FlowcovGate.run(args);
+      expect(warned.passed).toBe(true);
+      expect(logged()).toContain(
+        "Good: The org's version 1 differs from flows/Good.flow-meta.xml (only in the org: decisions:Old)",
+      );
+      expect(process.exitCode).toBeUndefined();
+
+      const failed = await FlowcovGate.run([...args, '--content-check', 'fail']);
+      expect(failed.passed).toBe(false);
+      expect(failed.flows.find((f) => f.flowName === 'Good')?.status).toBe('fail');
+      orgFingerprints.value = {};
     });
 
     it('shows a blank element coverage for Flows missing from the org', async () => {

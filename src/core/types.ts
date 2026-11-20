@@ -1,3 +1,5 @@
+import type { FlowFingerprint } from './flowFingerprint.js';
+
 /** One Apex test method that ran a Flow version. */
 export type FlowTestRef = {
   className: string;
@@ -45,6 +47,11 @@ export type CoverageSource = {
    * Names missing from the org are omitted.
    */
   getFlowCoverage(flowNames: string[]): Promise<FlowCoverage[]>;
+  /**
+   * Fingerprint of a Flow version's content, to compare with source. Undefined when the
+   * source can't read the version's content.
+   */
+  getFlowFingerprint?(flowVersionId: string): Promise<FlowFingerprint | undefined>;
 };
 
 /** Runs a Tooling API SOQL query and returns every record (all pages). */
@@ -121,7 +128,12 @@ export type GateFlowResult = {
   versionNumber?: number;
   elementCoveragePercent?: number;
   tests: FlowTestRef[];
+  /** Problems that don't change `status`, such as an org version that differs from source. */
+  warnings?: string[];
 };
+
+/** What the gate does when the org's Flow content differs from source. */
+export type ContentCheck = 'warn' | 'fail' | 'off';
 
 export type GateResult = {
   passed: boolean;
