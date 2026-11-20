@@ -1,11 +1,12 @@
 import { Messages } from '@salesforce/core';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { describeElements } from '../../core/elementCoverage.js';
+import { deployAsActiveAdvice } from '../../core/flowSettings.js';
 import { DEFAULT_THRESHOLD, isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from '../../core/flowTypes.js';
 import { getFlowChurn } from '../../core/git.js';
 import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
 import { buildReadinessReport } from '../../core/readiness.js';
-import { toolingQuery } from '../../core/toolingQuery.js';
+import { dataQuery, metadataRead, toolingQuery } from '../../core/toolingQuery.js';
 import type { ReadinessResult } from '../../core/types.js';
 
 Messages.importMessagesDirectoryFromMetaUrl(import.meta.url);
@@ -48,6 +49,8 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
     const churn = await getFlowChurn(flags['project-dir'], flags.since);
     const result = await buildReadinessReport({
       source: new OrgCoverageSource(toolingQuery(connection)),
+      metadataRead: metadataRead(connection),
+      dataQuery: dataQuery(connection),
       churn,
       threshold: flags.threshold,
     });
@@ -67,6 +70,13 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
       this.logSuccess('Ready: the org meets the coverage needed to deploy Flows as active.');
     } else {
       this.warn(`Not ready: add Apex tests for ${result.flowsNeeded} more Flow(s) to reach ${result.threshold}%.`);
+    }
+    if (result.deployAsActive !== undefined) {
+      const sandbox = result.isSandbox === true;
+      const advice = deployAsActiveAdvice(result.deployAsActive, result.ready, result.threshold, sandbox);
+      // On in production but below the threshold, deployments fail: that's worth a warning.
+      if (result.deployAsActive && !result.ready && !sandbox) this.warn(advice);
+      else this.log(advice);
     }
 
     const showChanges = result.flows.some((f) => f.changes !== undefined);

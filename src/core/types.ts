@@ -141,6 +141,10 @@ export type ReadinessResult = {
   flowsNeeded: number;
   /** Active Process Builder processes among the counted Flows. Salesforce no longer supports Process Builder. */
   processBuilderProcesses: number;
+  /** Whether "Deploy processes and flows as active" is on. Undefined when it could not be read. */
+  deployAsActive?: boolean;
+  /** Whether the org is a sandbox or scratch org, where the setting doesn't apply. Undefined when unknown. */
+  isSandbox?: boolean;
   /** Problems with the report as a whole, such as no Flow coverage recorded in the org. */
   warnings: string[];
   /** Uncovered first (most-changed first), then covered. */

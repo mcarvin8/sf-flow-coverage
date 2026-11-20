@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { describeObject, toolingQuery } from '../../src/core/toolingQuery.js';
+import { dataQuery, describeObject, metadataRead, toolingQuery } from '../../src/core/toolingQuery.js';
 import * as api from '../../src/index.js';
 
 describe('toolingQuery', () => {
@@ -9,6 +9,19 @@ describe('toolingQuery', () => {
     const connection = { tooling: { query } } as unknown as Parameters<typeof toolingQuery>[0];
     expect(await toolingQuery(connection)('SELECT Id FROM Flow')).toEqual([{ Id: '1' }]);
     expect(query).toHaveBeenCalledWith('SELECT Id FROM Flow', { autoFetch: true, maxFetch: 1_000_000 });
+  });
+});
+
+describe('dataQuery and metadataRead', () => {
+  it('query org data and read metadata through the connection', async () => {
+    const query = vi.fn().mockResolvedValue({ records: [{ IsSandbox: true }], done: true, totalSize: 1 });
+    const read = vi.fn().mockResolvedValue({ fullName: 'Flow' });
+    const connection = { query, metadata: { read } } as unknown as Parameters<typeof dataQuery>[0] &
+      Parameters<typeof metadataRead>[0];
+    expect(await dataQuery(connection)('SELECT IsSandbox FROM Organization')).toEqual([{ IsSandbox: true }]);
+    expect(query).toHaveBeenCalledWith('SELECT IsSandbox FROM Organization', { autoFetch: true, maxFetch: 1_000_000 });
+    expect(await metadataRead(connection)('FlowSettings', 'Flow')).toEqual({ fullName: 'Flow' });
+    expect(read).toHaveBeenCalledWith('FlowSettings', 'Flow');
   });
 });
 
@@ -33,11 +46,13 @@ describe('package entry point', () => {
       'buildFlowFileCoverage',
       'buildReadinessReport',
       'collectChangedFlows',
+      'dataQuery',
       'describeObject',
       'evaluateGate',
       'formatCoverage',
       'generateApexTest',
       'isCountedProcessType',
+      'metadataRead',
       'parseFlowXml',
       'requiredFieldValues',
       'scaffoldTests',

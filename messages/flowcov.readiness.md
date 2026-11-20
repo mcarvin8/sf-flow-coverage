@@ -8,6 +8,8 @@ Salesforce requires 75% of active autolaunched Flows and processes to be run by 
 
 FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first with coverage turned on (for example, `sf apex run test --test-level RunLocalTests --code-coverage --wait 60`) so the report is current. Without `--code-coverage`, Salesforce records no Flow coverage. When no Flow in the org has any coverage recorded, the command warns that the tests most likely ran without `--code-coverage`.
 
+The report also says whether "Deploy processes and flows as active" is already on, and what that means: turn it on once the org is ready, or keep coverage up so deployments of active Flows keep working. The setting only affects production; in a sandbox or scratch org the report says so.
+
 # examples
 
 - Report readiness for the default org:

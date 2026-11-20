@@ -73,6 +73,8 @@ sf flowcov transform --target-org ci-sandbox --format sonar
 
 `sf flowcov readiness` reports the org-wide percentage against the threshold and how many more Flows need a test to reach it. Uncovered Flows are ranked by how often their source file changed in git (run it from your Salesforce DX repo, or pass `--project-dir`), so the Flows most likely to be deployed next are at the top. Covered Flows list the Apex test methods that run them, their element coverage, and the elements no test runs yet. Process Builder processes are labeled, with a suggestion to migrate them to Flows (Salesforce no longer supports Process Builder) rather than write tests for them.
 
+It also reads whether **Deploy processes and flows as active** is already on and says what to do: turn it on once production is ready, or keep coverage up so deployments of active Flows keep working. The setting only affects production, so in a sandbox or scratch org the report points you to production instead.
+
 Pass `--fail-if-not-ready` to exit with code 1 below the threshold.
 
 ## Pull request gate
