@@ -1,3 +1,4 @@
+import { parseFilterFormula } from './filterFormula.js';
 import { escapeApexString } from './flowXml.js';
 import type { RequiredFieldMap } from './requiredFields.js';
 import type { FlowFilter, FlowMetadata, FlowVariable } from './types.js';
@@ -170,6 +171,10 @@ function criteriaTodos(flow: FlowMetadata, handled: Set<FlowFilter>): string[] {
   const todos: string[] = [];
   for (const filter of flow.filters) {
     if (handled.has(filter)) continue;
+    if (filter.formulaTerm !== undefined) {
+      todos.push(`// TODO: entry criteria formula term: ${filter.formulaTerm.replace(/\s+/g, ' ')}`);
+      continue;
+    }
     const value = filter.rawValue === undefined ? '' : ` ${filter.rawValue}`;
     todos.push(`// TODO: entry criteria: ${filter.field} ${filter.operator}${value}`);
   }
@@ -178,6 +183,16 @@ function criteriaTodos(flow: FlowMetadata, handled: Set<FlowFilter>): string[] {
     todos.push(`// TODO: entry criteria logic: ${flow.filterLogic}`);
   }
   return todos;
+}
+
+/**
+ * Reads a simple entry-criteria formula into filters the generator can meet, so only the terms
+ * it can't read stay TODOs. Other formulas stay a single TODO.
+ */
+function withFormulaFilters(flow: FlowMetadata): FlowMetadata {
+  const filters = flow.filterFormula ? parseFilterFormula(flow.filterFormula) : undefined;
+  if (!filters) return flow;
+  return { ...flow, filters: [...flow.filters, ...filters], filterFormula: undefined };
 }
 
 /** Described required fields win over the built-in list for standard objects. */
@@ -407,7 +422,8 @@ export type GenerateOptions = {
 };
 
 /** Generates a starter Apex test class for a Flow from its metadata. */
-export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = {}): GeneratedApexTest {
+export function generateApexTest(source: FlowMetadata, options: GenerateOptions = {}): GeneratedApexTest {
+  const flow = withFormulaFilters(source);
   const required = options.requiredFields ?? {};
   const values: CriteriaValues = {
     fieldValues: options.fieldValues ?? {},

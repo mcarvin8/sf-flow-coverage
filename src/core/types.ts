@@ -64,6 +64,8 @@ export type FlowFilter = {
   apexValue?: string;
   /** Raw value text, for TODO comments. */
   rawValue?: string;
+  /** The entry-criteria formula term this filter was read from, for TODO comments. */
+  formulaTerm?: string;
 };
 
 export type FlowVariable = {
