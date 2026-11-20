@@ -13,6 +13,7 @@ Most production orgs deploy Flows as inactive and activate them by hand, because
 <details>
   <summary>Table of Contents</summary>
 
+  - [Requirements](#requirements)
   - [Install](#install)
   - [Quick start](#quick-start)
   - [How coverage is measured](#how-coverage-is-measured)
@@ -27,9 +28,14 @@ Most production orgs deploy Flows as inactive and activate them by hand, because
 
 ---
 
-## Install
+## Requirements
 
-Requires the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) and Node.js 22.22 or later.
+- [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli)
+- Node.js 22.22 or later
+- An authenticated Salesforce org for `readiness` and `gate`. `scaffold` works without one, but with one it fills in required fields from the org.
+- No `git` binary. Git history is read with [tsgit](https://github.com/scolladon/tsgit), a pure TypeScript git implementation. `gate --from` and the change counts in `readiness` still need to run inside a git repository checkout.
+
+## Install
 
 ```bash
 sf plugins install sf-flow-coverage@x.y.z
