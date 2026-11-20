@@ -52,6 +52,11 @@ const ELEMENT_TYPES = [
 /** Resources, which Salesforce leaves out of a Flow's element coverage. */
 const RESOURCE_TYPES = new Set(['choices', 'constants', 'dynamicChoiceSets', 'formulas', 'textTemplates', 'variables']);
 
+/** Metadata element types Salesforce counts for element coverage. */
+export const EXECUTABLE_ELEMENT_TYPES: ReadonlySet<string> = new Set(
+  ELEMENT_TYPES.filter((type) => !RESOURCE_TYPES.has(type)),
+);
+
 /**
  * The elements Salesforce counts for element coverage: every element but the start and
  * resources. Types are singular (`decision`, `recordUpdate`).

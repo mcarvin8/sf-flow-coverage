@@ -25,14 +25,17 @@ describe('package entry point', () => {
   it('exports the programmatic API', () => {
     expect(Object.keys(api).sort()).toEqual([
       'COUNTED_PROCESS_TYPES',
+      'COVERAGE_FORMATS',
       'DEFAULT_THRESHOLD',
       'OrgCoverageSource',
       'apexClassMetaXml',
       'apexTestClassName',
+      'buildFlowFileCoverage',
       'buildReadinessReport',
       'collectChangedFlows',
       'describeObject',
       'evaluateGate',
+      'formatCoverage',
       'generateApexTest',
       'isCountedProcessType',
       'parseFlowXml',

@@ -8,7 +8,7 @@
 
 Get your Salesforce org ready to deploy Flows as active.
 
-Most production orgs deploy Flows as inactive and activate them by hand, because turning on **Deploy processes and flows as active** requires 75% Apex test coverage across every active autolaunched Flow and process, and few teams know how far they are from that bar. `sf-flow-coverage` shows you the gap and helps you close it: it reports your org-wide Flow coverage and which active Flows have none, generates starter Apex tests for uncovered Flows, and adds a per-Flow coverage gate to pull requests so you stay above the threshold once the setting is on. Salesforce only checks that the org-wide total stays above 75%, so a single Flow with no tests can still go live.
+Most production orgs deploy Flows as inactive and activate them by hand, because turning on **Deploy processes and flows as active** requires 75% Apex test coverage across every active autolaunched Flow and process, and few teams know how far they are from that bar. `sf-flow-coverage` shows you the gap and helps you close it: it reports your org-wide Flow coverage and which active Flows have none, generates starter Apex tests for uncovered Flows, adds a per-Flow coverage gate to pull requests so you stay above the threshold once the setting is on, and exports Flow coverage to SonarQube, Cobertura, and lcov so it shows up next to your Apex coverage. Salesforce only checks that the org-wide total stays above 75%, so a single Flow with no tests can still go live.
 
 <!-- TABLE OF CONTENTS -->
 <details>
@@ -21,6 +21,7 @@ Most production orgs deploy Flows as inactive and activate them by hand, because
   - [Readiness report](#readiness-report)
   - [Pull request gate](#pull-request-gate)
   - [Test scaffolding](#test-scaffolding)
+  - [Coverage reports](#coverage-reports)
   - [CLI Command Reference](#cli-command-reference)
   - [Programmatic API](#programmatic-api)
   - [Issues](#issues)
@@ -33,7 +34,7 @@ Most production orgs deploy Flows as inactive and activate them by hand, because
 
 - [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli)
 - Node.js 22.22 or later
-- An authenticated Salesforce org for `readiness` and `gate`. `scaffold` works without one, but with one it fills in required fields from the org.
+- An authenticated Salesforce org for `readiness`, `gate`, and `transform`. `scaffold` works without one, but with one it fills in required fields from the org.
 - No `git` binary. Git history is read with [tsgit](https://github.com/scolladon/tsgit), a pure TypeScript git implementation. `gate --from` and the change counts in `readiness` still need to run inside a git repository checkout.
 
 ## Install
@@ -56,18 +57,21 @@ sf flowcov scaffold --uncovered --target-org prod
 
 # 4. In CI, after deploying the branch and running tests, require coverage for each changed Flow
 sf flowcov gate --target-org ci-sandbox --from origin/main --to HEAD
+
+# 5. Publish Flow coverage to SonarQube next to your Apex coverage
+sf flowcov transform --target-org ci-sandbox --format sonar
 ```
 
 ## How coverage is measured
 
 - **What counts.** Active Flows with the process types Salesforce counts toward deploy-as-active: autolaunched Flows (including record-triggered, platform event and schedule-triggered Flows) and Process Builder processes. Screen Flows don't count.
-- **Where it comes from.** Salesforce records which Flow versions each Apex test runs in the Tooling API `FlowTestCoverage` object when Apex tests run in the org. All three commands read it, so run your Apex tests before using them.
+- **Where it comes from.** Salesforce records which Flow versions each Apex test runs in the Tooling API `FlowTestCoverage` object when Apex tests run in the org. `readiness`, `gate`, and `transform` read it, so run your Apex tests before using them.
 - **Run tests with `--code-coverage`.** Without `--code-coverage`, `sf apex run test` skips coverage and Salesforce records no Flow coverage. Check-only deployments (`sf project deploy validate`) don't record it either.
 - **Only Apex counts.** Flow Builder tests and Flow Test Mode (Winter '27) don't count toward the 75% requirement, so `scaffold` generates Apex tests, not Flow test metadata. The coverage source is pluggable, so if Salesforce starts counting Test Mode coverage it can be added without changing the commands.
 
 ## Readiness report
 
-`sf flowcov readiness` reports the org-wide percentage against the threshold and how many more Flows need a test to reach it. Uncovered Flows are ranked by how often their source file changed in git (run it from your Salesforce DX repo, or pass `--project-dir`), so the Flows most likely to be deployed next are at the top. Covered Flows list the Apex test methods that run them and their element coverage.
+`sf flowcov readiness` reports the org-wide percentage against the threshold and how many more Flows need a test to reach it. Uncovered Flows are ranked by how often their source file changed in git (run it from your Salesforce DX repo, or pass `--project-dir`), so the Flows most likely to be deployed next are at the top. Covered Flows list the Apex test methods that run them, their element coverage, and the elements no test runs yet.
 
 Pass `--fail-if-not-ready` to exit with code 1 below the threshold.
 
@@ -81,7 +85,7 @@ Coverage is read from the target org, so in CI:
 2. Run Apex tests there with `sf apex run test --code-coverage`.
 3. Run the gate against that org.
 
-The gate checks the Flow's active version in the org (or its latest version if none is active), and prints that version in the result.
+The gate checks the Flow's active version in the org (or its latest version if none is active), and prints that version in the result. It fails a Flow when the org has no active version of it, or a newer inactive one: both usually mean the branch was deployed inactive. With `--from`, it also compares each changed Flow with the org's version and warns (or, with `--content-check fail`, fails) when the branch wasn't deployed. A Flow that fails `--min-element-coverage` names the elements no test runs.
 
 ## Test scaffolding
 
@@ -89,15 +93,33 @@ The gate checks the Flow's active version in the org (or its latest version if n
 
 | Flow type | Generated test |
 | --- | --- |
-| Record-triggered (create, update, delete) | Builds a record of the trigger object, sets entry criteria that are simple `EqualTo` filters, and inserts, updates, or deletes it. Create-and-update Flows get one test method for each. |
+| Record-triggered (create, update, delete) | Builds a record of the trigger object that meets the entry criteria, inserts, updates, or deletes it, and asserts what the Flow does (see below). Create-and-update Flows get one test method for each. |
 | Autolaunched (no trigger) | Starts the Flow with `Flow.Interview.createInterview`, with a placeholder for every input variable and a read of every output variable. |
 | Platform event | Publishes the event and delivers it with `Test.getEventBus().deliver()`. |
 | Schedule-triggered | Starts the Flow directly, since Apex tests can't fire the schedule. |
 | Process Builder | A placeholder test to fill in. |
 
-With a target org (`--target-org` or your default org), the command describes each object the test creates and fills in its required fields: text, numbers, dates, and the default picklist value. It also meets "is not null" entry criteria (`IsNull` `false`) by giving those fields a value. Lookups it can't make up are left as TODOs. Without an org, only common standard objects (Account, Contact, Opportunity, and so on) get required fields.
+Entry criteria are met for `EqualTo`, comparisons (`GreaterThan`, `LessThan`, and their `OrEqualTo` forms), `Contains`/`StartsWith`/`EndsWith`, `IsChanged`, and `IsNull`, and for formulas that are an `AND(...)` of simple conditions on the record's own fields.
 
-Every generated test has TODOs for anything it couldn't fill in, entry criteria it couldn't set (formulas, cross-object fields, other operators), and real assertions. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`.
+With a target org (`--target-org` or your default org), the command describes each object the test creates and fills in its required fields: text, numbers, dates, and the default picklist value. It meets "is not null" criteria by giving those fields a value, and fills required lookups with a parent record it inserts (or the running user, or the standard price book). Without an org, only common standard objects (Account, Contact, Opportunity, and so on) get required fields.
+
+For record-triggered Flows, the command follows the Flow's elements for the record the test creates. It asserts the fields the Flow is certain to set, and when the Flow is certain to block the save with a custom error, the test expects that error. Fields the Flow sets only on a decision outcome it can't predict get commented-out assertions.
+
+Every generated test has TODOs for anything it couldn't fill in, such as entry criteria it couldn't meet (cross-object fields, `OR` formulas) and assertions it couldn't work out. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`.
+
+## Coverage reports
+
+`sf flowcov transform` writes the org's Flow coverage as files other coverage tools read, so Flow coverage shows up next to Apex coverage in SonarQube, GitLab, Azure DevOps, or Codecov:
+
+| `--format` | File | Read by |
+| --- | --- | --- |
+| `sonar` | `flow-coverage-sonar.xml` | SonarQube `sonar.coverageReportPaths` |
+| `cobertura` | `flow-coverage-cobertura.xml` | GitLab, Azure DevOps, Codecov |
+| `lcov` | `flow-coverage.info` | Codecov, Coveralls, most lcov tools |
+
+Each executable element of a Flow becomes one line: the line of its `<name>` in the `.flow-meta.xml` file, covered when any Apex test ran it. A Flow's line coverage therefore equals its element coverage. Paths are relative to `--project-dir`. For SonarQube, the Flow files must be indexed (for example, `sonar.inclusions=**/*.cls,**/*.trigger,**/*.flow-meta.xml`) for their coverage to be imported.
+
+The command warns when a Flow file's elements don't match the version the org covered, since the line numbers would then point at the wrong elements.
 
 ## CLI Command Reference
 
@@ -105,6 +127,7 @@ Every generated test has TODOs for anything it couldn't fill in, entry criteria 
 * [`sf flowcov gate`](#sf-flowcov-gate)
 * [`sf flowcov readiness`](#sf-flowcov-readiness)
 * [`sf flowcov scaffold`](#sf-flowcov-scaffold)
+* [`sf flowcov transform`](#sf-flowcov-transform)
 
 ## `sf flowcov gate`
 
@@ -292,6 +315,60 @@ EXAMPLES
 ```
 
 _See code: [src/commands/flowcov/scaffold.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/scaffold.ts)_
+
+## `sf flowcov transform`
+
+Write Flow element coverage as SonarQube, Cobertura, or lcov coverage reports.
+
+```
+USAGE
+  $ sf flowcov transform -o <value> --format sonar|cobertura|lcov... [--json] [--flags-dir <value>] [--api-version
+    <value>] [--output-dir <value>] [-d <value>]
+
+FLAGS
+  -d, --project-dir=<value>  [default: .] Project root with the Flow metadata files. Report paths are relative to it.
+  -o, --target-org=<value>   (required) Username or alias of the target org. Not required if the `target-org`
+                             configuration variable is already set.
+      --api-version=<value>  Override the api version used for api requests made by this command
+      --format=<option>...   (required) Coverage format to write: sonar (SonarQube generic coverage), cobertura, or
+                             lcov.
+                             <options: sonar|cobertura|lcov>
+      --output-dir=<value>   [default: coverage] Folder to write the coverage reports to.
+
+GLOBAL FLAGS
+  --flags-dir=<value>  Import flag values from a directory.
+  --json               Format output as json.
+
+DESCRIPTION
+  Write Flow element coverage as SonarQube, Cobertura, or lcov coverage reports.
+
+  Reads Flow coverage from the target org and maps it onto the project's Flow metadata files, so Flow coverage shows up
+  next to Apex coverage in tools such as SonarQube, GitLab, Azure DevOps, or Codecov. Each executable element of a Flow
+  (every element except the start element and resources such as variables and formulas) becomes one line: the line of
+  its `<name>` in the `.flow-meta.xml` file, covered when any Apex test ran the element. A Flow's line coverage
+  therefore equals its element coverage.
+
+  Covers every active Flow and process that counts toward "Deploy processes and flows as active" and has a source file
+  in the project. Paths in the reports are relative to --project-dir; run the command from the root your coverage tool
+  expects. For SonarQube, the Flow files must be indexed (for example, include `**/*.flow-meta.xml` in
+  `sonar.inclusions`) for their coverage to be imported.
+
+  Coverage is read from FlowTestCoverage, which Salesforce fills in when Apex tests run in the org with coverage on (`sf
+  apex run test --code-coverage`). Without `--code-coverage`, and in check-only deployments, Salesforce records no Flow
+  coverage. When a Flow file's elements don't match the version the org covered, the command warns that its line
+  coverage may be off.
+
+EXAMPLES
+  Write a SonarQube generic coverage report to the coverage folder:
+
+    $ sf flowcov transform --target-org ci-sandbox --format sonar
+
+  Write Cobertura and lcov reports to a folder of your choice:
+
+    $ sf flowcov transform --target-org ci-sandbox --format cobertura --format lcov --output-dir reports
+```
+
+_See code: [src/commands/flowcov/transform.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/transform.ts)_
 <!-- commandsstop -->
 
 ## Programmatic API

@@ -1,4 +1,6 @@
 export { apexClassMetaXml, apexTestClassName, generateApexTest } from './core/apexTemplate.js';
+export type { CoverageFormat } from './core/coverageFormats.js';
+export { COVERAGE_FORMATS, formatCoverage } from './core/coverageFormats.js';
 export { COUNTED_PROCESS_TYPES, DEFAULT_THRESHOLD, isCountedProcessType } from './core/flowTypes.js';
 export { parseFlowXml } from './core/flowXml.js';
 export type { GateCandidate, GateOptions } from './core/gate.js';
@@ -11,4 +13,11 @@ export { requiredFieldValues } from './core/requiredFields.js';
 export type { ScaffoldOptions } from './core/scaffold.js';
 export { scaffoldTests } from './core/scaffold.js';
 export { describeObject, toolingQuery } from './core/toolingQuery.js';
+export type {
+  FlowCoverageLine,
+  FlowFileCoverage,
+  FlowFileCoverageOptions,
+  FlowFileCoverageReport,
+} from './core/transform.js';
+export { buildFlowFileCoverage } from './core/transform.js';
 export type * from './core/types.js';

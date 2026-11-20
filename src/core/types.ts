@@ -163,6 +163,17 @@ export type GateResult = {
   flows: GateFlowResult[];
 };
 
+export type TransformResult = {
+  /** Each coverage report written. */
+  files: Array<{ format: string; path: string }>;
+  /** Flows in the reports, with their element counts. */
+  flows: Array<{ flowName: string; path: string; elementsCovered: number; elementsTotal: number }>;
+  /** Active Flows left out of the reports, and why. */
+  skipped: Array<{ flowName: string; reason: string }>;
+  /** Flows whose source file may not match the version the org covered. */
+  warnings: string[];
+};
+
 export type ScaffoldedTest = {
   flowName: string;
   className: string;
