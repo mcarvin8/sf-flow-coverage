@@ -4,6 +4,7 @@
 [![Downloads/week](https://img.shields.io/npm/dw/sf-flow-coverage.svg)](https://npmjs.org/package/sf-flow-coverage)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://raw.githubusercontent.com/mcarvin8/sf-flow-coverage/refs/heads/main/LICENSE.md)
 [![codecov](https://codecov.io/gh/mcarvin8/sf-flow-coverage/graph/badge.svg?token=7R49P3RQ47)](https://codecov.io/gh/mcarvin8/sf-flow-coverage)
+[![Mutation testing badge](https://img.shields.io/endpoint?style=flat&url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Fmcarvin8%2Fsf-flow-coverage%2Fmain)](https://dashboard.stryker-mutator.io/reports/github.com/mcarvin8/sf-flow-coverage/main)
 
 Get your Salesforce org ready to deploy Flows as active.
 
