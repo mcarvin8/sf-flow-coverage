@@ -116,6 +116,49 @@ describe('scaffoldTests', () => {
     }
   });
 
+  it('describes the objects behind text inputs an autolaunched Flow uses as Ids', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-inputs-'));
+    try {
+      mkdirSync(join(project, 'flows'));
+      writeFileSync(
+        join(project, 'flows', 'Find_Flow.flow-meta.xml'),
+        `<Flow><processType>AutoLaunchedFlow</processType><status>Active</status>
+          <variables><name>itemId</name><dataType>String</dataType><isInput>true</isInput><isOutput>false</isOutput><isCollection>false</isCollection></variables>
+          <variables><name>siteId</name><dataType>String</dataType><isInput>true</isInput><isOutput>false</isOutput><isCollection>false</isCollection></variables>
+          <variables><name>notInput</name><dataType>String</dataType><isInput>false</isInput><isOutput>false</isOutput><isCollection>false</isCollection></variables>
+          <recordLookups><name>Find</name><object>Item__c</object><storeOutputAutomatically>true</storeOutputAutomatically>
+            <filters><field>Id</field><operator>EqualTo</operator><value><elementReference>itemId</elementReference></value></filters>
+            <filters><field>Site__c</field><operator>EqualTo</operator><value><elementReference>siteId</elementReference></value></filters>
+            <filters><field>Other__c</field><operator>EqualTo</operator><value><elementReference>notInput</elementReference></value></filters>
+          </recordLookups>
+          <start><connector><targetReference>Find</targetReference></connector></start>
+        </Flow>`,
+      );
+      const described: string[] = [];
+      const required = { name: 'Name', type: 'string', nillable: false, createable: true, defaultedOnCreate: false };
+      await scaffoldTests({
+        flowNames: ['Find_Flow'],
+        projectDir: project,
+        outputDir: out,
+        describe: async (name) => {
+          described.push(name);
+          if (name !== 'Item__c') return [required];
+          return [
+            required,
+            { ...required, name: 'Site__c', type: 'reference', nillable: true, referenceTo: ['Site__c'] },
+            { ...required, name: 'Other__c', type: 'reference', nillable: true, referenceTo: ['Other__c'] },
+          ];
+        },
+      });
+      expect(described).toEqual(['Item__c', 'Site__c']);
+      const test = readFileSync(join(out, 'Find_Flow_FlowTest.cls'), 'utf8');
+      expect(test).toContain("inputs.put('itemId', itemIdRecord.Id);");
+      expect(test).toContain("inputs.put('siteId', siteIdRecord.Id);");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   it('does not overwrite existing classes unless forced', async () => {
     const classPath = join(out, 'Contact_Process_FlowTest.cls');
     writeFileSync(classPath, 'existing');

@@ -39,7 +39,27 @@ function objectsToCreate(flow: FlowMetadata): string[] {
     .filter((v) => v.isInput && !v.isCollection && v.dataType === 'SObject' && v.objectType)
     .map((v) => v.objectType as string);
   if ((kind === 'record' || kind === 'platformEvent') && flow.object) objects.push(flow.object);
+  // A text input the Flow filters records by (`Id = {!recordId}`) gets a record of that object.
+  for (const filter of idInputFilters(flow)) if (filter.field === 'Id') objects.push(filter.object);
   return objects;
+}
+
+/** Filters that compare a field with one of the Flow's text input variables. */
+function idInputFilters(flow: FlowMetadata): Array<{ variable: string; object: string; field: string }> {
+  if (flowKind(flow) !== 'autolaunched') return [];
+  const inputs = new Set(
+    flow.variables
+      .filter((v) => v.isInput && !v.isCollection && ['String', 'Text'].includes(v.dataType))
+      .map((v) => v.name),
+  );
+  return (flow.graph?.idFilters ?? []).filter((f) => inputs.has(f.variable));
+}
+
+/** Objects filtered by a lookup field compared with a text input, to learn what the lookup points to. */
+function idInputLookupObjects(flow: FlowMetadata): string[] {
+  return idInputFilters(flow)
+    .filter((f) => f.field !== 'Id')
+    .map((f) => f.object);
 }
 
 /**
@@ -62,6 +82,11 @@ function criteriaLookups(flow: FlowMetadata, relationships: Record<string, strin
 function parentObjects(flows: FlowMetadata[], fields: ObjectFields): string[] {
   const parents: string[] = [];
   for (const flow of flows) {
+    // An input compared with a lookup field holds an Id of the lookup's target.
+    for (const filter of idInputFilters(flow).filter((f) => f.field !== 'Id')) {
+      const target = fields.lookups[filter.object]?.[filter.field];
+      if (target && canInsertParent(target)) parents.push(target);
+    }
     for (const object of objectsToCreate(flow)) {
       const criteria = object === flow.object ? criteriaLookups(flow, fields.relationships[object] ?? {}) : new Set();
       for (const [field, target] of Object.entries(fields.lookups[object] ?? {})) {
@@ -128,7 +153,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
   const objectFields = emptyObjectFields();
   if (options.describe) {
     await loadObjectFields(
-      flows.flatMap((f) => objectsToCreate(f.flow)),
+      flows.flatMap((f) => [...objectsToCreate(f.flow), ...idInputLookupObjects(f.flow)]),
       options.describe,
       objectFields,
     );

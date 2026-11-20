@@ -1,4 +1,4 @@
-import { entryCondition, negate } from './conditions.js';
+import { entryCondition, knownOf, negate } from './conditions.js';
 import { type CriteriaPlan, type SolveContext, solveCriteria } from './criteria.js';
 import {
   type FieldState,
@@ -10,7 +10,13 @@ import {
 } from './flowGraph.js';
 import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './flowTypes.js';
 import { escapeApexString } from './flowXml.js';
-import { canInsertParent, EXISTING_RECORD_IDS, MAX_PARENT_DEPTH, type RequiredFieldMap } from './requiredFields.js';
+import {
+  canInsertParent,
+  EXISTING_RECORD_IDS,
+  MAX_PARENT_DEPTH,
+  type PicklistInfo,
+  type RequiredFieldMap,
+} from './requiredFields.js';
 import type { FlowMetadata, FlowVariable } from './types.js';
 
 const MAX_CLASS_NAME = 40;
@@ -96,6 +102,8 @@ type CriteriaValues = {
   readOnlyFields: Record<string, string[]>;
   /** Fields a test can set on insert but not change in an update, per object. */
   createOnlyFields: Record<string, string[]>;
+  /** Active picklist values per field, per object. */
+  picklists: Record<string, Record<string, PicklistInfo>>;
 };
 
 /** What the criteria solver knows about the record an insert or an update test builds. */
@@ -114,6 +122,14 @@ function criteriaContext(
     relationships: values.relationships[object] ?? {},
     lookups: values.lookups[object] ?? {},
     parentFieldValues: (parent) => values.fieldValues[parent] ?? {},
+    normalize: (target, field, apex) => {
+      const picklist = values.picklists[target]?.[field];
+      const known = knownOf(apex);
+      if (!picklist || known.kind !== 'string') return apex;
+      const match = picklist.values.find((v) => v.toLowerCase() === known.value.toLowerCase());
+      if (match !== undefined) return `'${escapeApexString(match)}'`;
+      return picklist.restricted ? null : apex;
+    },
     writable: (target, field, when) =>
       !values.readOnlyFields[target]?.includes(field) &&
       (when === 'insert' || !values.createOnlyFields[target]?.includes(field)),
@@ -231,6 +247,13 @@ function createdChecks(creates: RecordCreate[], variable: string, i2: string): s
       lines.push(`${i2}// TODO: ${create.element} creates a ${create.object}; assert it`);
       return;
     }
+    if (create.mayFail) {
+      // With a fault path, a failed create (a validation rule, say) doesn't fail the Flow.
+      lines.push(
+        `${i2}// TODO: ${create.element} creates a ${create.object} unless it fails and its fault path runs; assert it`,
+      );
+      return;
+    }
     const literal = create.fields.filter((f) => f !== link && f.value.apexValue !== undefined);
     const message = `'${escapeApexString(create.element)} should create a ${create.object}'`;
     const query = `[SELECT Id${literal.map((f) => `, ${f.field}`).join('')} FROM ${create.object} WHERE ${link.field} = :${variable}.Id]`;
@@ -286,12 +309,16 @@ function flowChecks(walk: FlowWalk, object: string, variable: string, dml: strin
   const lines: string[] = [];
   for (const [field, write] of certain) {
     const value = write.value.apexValue;
-    if (value !== undefined && !maybe.has(field)) {
+    if (value !== undefined && !maybe.has(field) && !write.mayFail) {
       lines.push(
         `${i2}Assert.areEqual(${value}, result.${field}, '${escapeApexString(write.element)} should set ${field}');`,
       );
     } else {
-      const reason = maybe.has(field) ? ', and a later branch may change it' : '';
+      const reason = maybe.has(field)
+        ? ', and a later branch may change it'
+        : write.mayFail
+          ? ' unless it fails and its fault path runs'
+          : '';
       lines.push(
         `${i2}// TODO: ${write.element} sets ${field} to ${write.value.rawValue ?? 'a value'}${reason}; assert it`,
       );
@@ -540,12 +567,30 @@ function inputValue(variable: FlowVariable): string {
   }
 }
 
+/**
+ * The object whose Id a text input holds, when the Flow filters records by it (`Id = {!recordId}`,
+ * or a lookup field such as `Account__c = {!accountId}`).
+ */
+function idInputObject(
+  flow: FlowMetadata,
+  variable: string,
+  lookups: Record<string, Record<string, string>>,
+): string | undefined {
+  for (const filter of flow.graph?.idFilters ?? []) {
+    if (filter.variable !== variable) continue;
+    const target = filter.field === 'Id' ? filter.object : lookups[filter.object]?.[filter.field];
+    if (target) return target;
+  }
+  return undefined;
+}
+
 function interviewMethod(
   flow: FlowMetadata,
   name: string,
   notes: string[],
   required: RequiredFieldMap,
   walkOutputs = false,
+  lookups: Record<string, Record<string, string>> = {},
 ): string[] {
   const i2 = INDENT.repeat(2);
   const lines = [`${INDENT}@IsTest`, `${INDENT}static void ${name}() {`, ...notes.map((n) => `${i2}// ${n}`)];
@@ -556,7 +601,35 @@ function interviewMethod(
       lines.push(
         ...newRecord(variable.objectType, local, recordFields(variable.objectType, new Map(), required), i2, required),
       );
-      lines.push(`${i2}insert ${local};`, `${i2}inputs.put('${escapeApexString(variable.name)}', ${local});`);
+      lines.push(`${i2}insert ${local};`);
+      // A record from DML only holds the fields the test set; query the ones the Flow reads.
+      const reads = flow.recordReads?.[variable.name] ?? [];
+      if (reads.length > 0) {
+        lines.push(
+          `${i2}${local} = [SELECT Id, ${reads.join(', ')} FROM ${variable.objectType} WHERE Id = :${local}.Id];`,
+        );
+      }
+      lines.push(`${i2}inputs.put('${escapeApexString(variable.name)}', ${local});`);
+    } else if (
+      !variable.isCollection &&
+      ['String', 'Text'].includes(variable.dataType) &&
+      idInputObject(flow, variable.name, lookups)
+    ) {
+      // A text input the Flow uses as a record Id gets a real record's Id, not placeholder text.
+      const object = idInputObject(flow, variable.name, lookups) as string;
+      const key = escapeApexString(variable.name);
+      if (object in EXISTING_RECORD_IDS) {
+        lines.push(`${i2}inputs.put('${key}', ${EXISTING_RECORD_IDS[object]});`);
+      } else if (canInsertParent(object) && knownRequired(object, required)) {
+        const local = `${camel(variable.name) || 'input'}Record`;
+        lines.push(
+          ...newRecord(object, local, recordFields(object, new Map(), required), i2, required),
+          `${i2}insert ${local};`,
+          `${i2}inputs.put('${key}', ${local}.Id);`,
+        );
+      } else {
+        lines.push(`${i2}inputs.put('${key}', null); // TODO: the Id of a ${object} record`);
+      }
     } else {
       const type = variable.apexClass ?? variable.objectType ?? variable.dataType;
       lines.push(
@@ -683,6 +756,8 @@ export type GenerateOptions = {
   readOnlyFields?: Record<string, string[]>;
   /** Fields a test can set on insert but not change in an update, per object. Update tests set them in the insert. */
   createOnlyFields?: Record<string, string[]>;
+  /** Active picklist values per field, per object. Criteria values are spelled to match, and restricted picklists only get their own values. */
+  picklists?: Record<string, Record<string, PicklistInfo>>;
 };
 
 type ResolvedLookups = {
@@ -707,9 +782,8 @@ function resolveLookups(options: GenerateOptions): ResolvedLookups {
     // record type of the object when the describe shows it has any besides Master.
     if (target === 'BusinessHours') return '[SELECT Id FROM BusinessHours WHERE IsDefault = true LIMIT 1].Id';
     if (target === 'RecordType') {
-      return (options.recordTypes?.[source] ?? 0) > 1
-        ? `[SELECT Id FROM RecordType WHERE SobjectType = '${source}' AND IsActive = true LIMIT 1].Id`
-        : undefined;
+      // The running user's default record type, which the user can always use.
+      return (options.recordTypes?.[source] ?? 0) > 1 ? `defaultRecordTypeId(${source}.SObjectType)` : undefined;
     }
     if (!canInsertParent(target) || !options.requiredFields?.[target]) return undefined;
     const variable = `${camel(target) || 'record'}Parent`;
@@ -802,6 +876,16 @@ function unsetValuesOf(options: GenerateOptions): Record<string, Record<string, 
   return unset;
 }
 
+/** Looks up the running user's default record type for an object. */
+const DEFAULT_RECORD_TYPE_HELPER = [
+  `${INDENT}private static Id defaultRecordTypeId(Schema.SObjectType objectType) {`,
+  `${INDENT}${INDENT}for (Schema.RecordTypeInfo info : objectType.getDescribe().getRecordTypeInfos()) {`,
+  `${INDENT}${INDENT}${INDENT}if (info.isDefaultRecordTypeMapping()) return info.getRecordTypeId();`,
+  `${INDENT}${INDENT}}`,
+  `${INDENT}${INDENT}return null;`,
+  `${INDENT}}`,
+];
+
 /** Generates a starter Apex test class for a Flow from its metadata. */
 export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = {}): GeneratedApexTest {
   const lookups = resolveLookups(options);
@@ -815,6 +899,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     parentFields: new Map(),
     readOnlyFields: options.readOnlyFields ?? {},
     createOnlyFields: options.createOnlyFields ?? {},
+    picklists: options.picklists ?? {},
   };
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);
@@ -846,13 +931,15 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
       break;
     case 'autolaunched':
       description = 'Autolaunched (no trigger).';
-      methods = interviewMethod(flow, 'runsFlow', [], required, true);
+      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {});
       break;
     default:
       description = `Process type ${flow.processType ?? 'unknown'}.`;
       methods = processMethod(flow);
   }
 
+  if (methods.some((line) => line.includes('defaultRecordTypeId(')))
+    methods = [...methods, '', ...DEFAULT_RECORD_TYPE_HELPER];
   methods = withParentInserts(methods, lookups.parents, required, options.requiredFields ?? {}, values.parentFields);
   const body = [...header(flow, description), `private class ${className} {`, ...methods, '}', ''].join('\n');
   return { className, body, kind };

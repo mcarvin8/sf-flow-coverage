@@ -13,6 +13,11 @@ export type FlowGraph = {
   nodes: Record<string, FlowNode>;
   /** Formula resources by name, for decisions that read them. */
   formulas: Record<string, Expr>;
+  /**
+   * Get, Update, and Delete Records filters that compare a field with a variable, such as
+   * `Id = {!recordId}`. Tells which object an Id passed in as text belongs to.
+   */
+  idFilters: Array<{ variable: string; object: string; field: string }>;
 };
 
 /** A write to a field of the triggering record. */
@@ -21,13 +26,21 @@ export type FieldWrite = {
   value: FlowValue;
   /** The element that writes it. */
   element: string;
+  /** True when the element has a fault path, so it can fail without failing the Flow. */
+  mayFail?: boolean;
 };
 
 /** A write to a variable. */
 export type VariableWrite = { variable: string; value: FlowValue; element: string };
 
 /** A record the Flow creates, with the fields it sets. */
-export type RecordCreate = { element: string; object: string; fields: Array<{ field: string; value: FlowValue }> };
+export type RecordCreate = {
+  element: string;
+  object: string;
+  fields: Array<{ field: string; value: FlowValue }>;
+  /** True when the element has a fault path, so it can fail without failing the Flow. */
+  mayFail?: boolean;
+};
 
 export type DecisionRule = { name: string; label: string; condition: Condition; next?: string };
 
@@ -81,6 +94,8 @@ export const GRAPH_ARRAY_PATHS = [
   'Flow.decisions.rules.conditions',
   'Flow.recordUpdates.inputAssignments',
   'Flow.recordUpdates.filters',
+  'Flow.recordLookups.filters',
+  'Flow.recordDeletes.filters',
   'Flow.recordCreates.inputAssignments',
   'Flow.customErrors.customErrorMessages',
 ];
@@ -89,6 +104,9 @@ const RECORD_FIELD = /^\$Record\.([A-Za-z][A-Za-z0-9_]*)$/;
 const VARIABLE = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 const target = (connector: unknown): string | undefined => text(asRecord(connector)?.targetReference);
+
+/** An element with a fault path can fail (a validation rule, a missing field) and the Flow carries on. */
+const hasFaultPath = (element: XmlRecord): boolean => target(element.faultConnector) !== undefined;
 
 /** Every element an element can continue to, apart from its fault path. */
 function nextsOf(element: XmlRecord): string[] {
@@ -178,7 +196,11 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
       ? {
           kind: 'write',
           name,
-          writes: fieldAssignments(element).map((a) => ({ ...a, element: name })),
+          writes: fieldAssignments(element).map((a) => ({
+            ...a,
+            element: name,
+            ...(hasFaultPath(element) ? { mayFail: true } : {}),
+          })),
           variables: [],
           nexts: nextsOf(element),
         }
@@ -188,12 +210,9 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
     const object = text(element.object);
     // A create from a record variable doesn't say which fields it sets.
     if (!object || text(element.inputReference)) return { kind: 'other', name, nexts: nextsOf(element) };
-    return {
-      kind: 'create',
-      name,
-      create: { element: name, object, fields: fieldAssignments(element) },
-      nexts: nextsOf(element),
-    };
+    const create: RecordCreate = { element: name, object, fields: fieldAssignments(element) };
+    if (hasFaultPath(element)) create.mayFail = true;
+    return { kind: 'create', name, create, nexts: nextsOf(element) };
   });
   each('recordLookups', (name, element) => {
     const object = text(element.object);
@@ -213,13 +232,26 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
     each(type, (name, element) => ({ kind: 'other', name, nexts: nextsOf(element) }));
   for (const type of STOP_TYPES) each(type, (name, element) => ({ kind: 'stop', name, nexts: nextsOf(element) }));
 
+  const idFilters: FlowGraph['idFilters'] = [];
+  for (const type of ['recordLookups', 'recordUpdates', 'recordDeletes']) {
+    for (const element of asArray(flow[type])) {
+      const object = text(element.object);
+      if (!object) continue;
+      for (const filter of asArray(element.filters)) {
+        const field = text(filter.field);
+        const variable = text(asRecord(filter.value)?.elementReference);
+        if (field && variable && VARIABLE.test(variable)) idFilters.push({ variable, object, field });
+      }
+    }
+  }
+
   const formulas: Record<string, Expr> = {};
   for (const formula of asArray(flow.formulas)) {
     const name = text(formula.name);
     const expr = parseFormula(text(formula.expression) ?? '');
     if (name && expr) formulas[name] = expr;
   }
-  return { start: target(asRecord(flow.start)?.connector), nodes, formulas };
+  return { start: target(asRecord(flow.start)?.connector), nodes, formulas, idFilters };
 }
 
 /**
