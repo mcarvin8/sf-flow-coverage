@@ -29,7 +29,7 @@ Most production orgs deploy Flows as inactive and activate them by hand, because
 
 ## Install
 
-Requires the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) and Node.js 22.19 or later.
+Requires the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) and Node.js 22.22 or later.
 
 ```bash
 sf plugins install sf-flow-coverage@x.y.z
