@@ -2,10 +2,17 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
+import { parseFilterFormula } from './filterFormula.js';
 import { isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
 import { findFlowFiles, readProjectConfig } from './projectFiles.js';
-import { type DescribeObject, loadObjectFields, type ObjectFields } from './requiredFields.js';
+import {
+  canInsertParent,
+  type DescribeObject,
+  emptyObjectFields,
+  loadObjectFields,
+  type ObjectFields,
+} from './requiredFields.js';
 import type { FlowMetadata, ScaffoldResult } from './types.js';
 
 export const DEFAULT_APEX_API_VERSION = '65.0';
@@ -32,6 +39,31 @@ function objectsToCreate(flow: FlowMetadata): string[] {
     .map((v) => v.objectType as string);
   if ((kind === 'record' || kind === 'platformEvent') && flow.object) objects.push(flow.object);
   return objects;
+}
+
+/** Entry-criteria fields on the triggering record, from filters and a simple formula. */
+function criteriaFields(flow: FlowMetadata): Set<string> {
+  const formulaFilters = flow.filterFormula ? (parseFilterFormula(flow.filterFormula) ?? []) : [];
+  return new Set([...flow.filters, ...formulaFilters].map((f) => f.field));
+}
+
+/**
+ * Objects a generated test inserts as parents: targets of lookups that are required, or that
+ * the entry criteria reference, on the records the test creates. One level deep: a parent's
+ * own required lookups stay TODOs.
+ */
+function parentObjects(flows: FlowMetadata[], fields: ObjectFields): string[] {
+  const parents: string[] = [];
+  for (const flow of flows) {
+    const criteria = criteriaFields(flow);
+    for (const object of objectsToCreate(flow)) {
+      for (const [field, target] of Object.entries(fields.lookups[object] ?? {})) {
+        const used = field in (fields.requiredFields[object] ?? {}) || (object === flow.object && criteria.has(field));
+        if (used && canInsertParent(target)) parents.push(target);
+      }
+    }
+  }
+  return parents;
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -77,12 +109,22 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     flows.push({ flowName, flow });
   }
 
-  const objectFields: ObjectFields = options.describe
-    ? await loadObjectFields(
-        flows.flatMap((f) => objectsToCreate(f.flow)),
-        options.describe,
-      )
-    : { requiredFields: {}, fieldValues: {}, changedValues: {} };
+  const objectFields = emptyObjectFields();
+  if (options.describe) {
+    await loadObjectFields(
+      flows.flatMap((f) => objectsToCreate(f.flow)),
+      options.describe,
+      objectFields,
+    );
+    await loadObjectFields(
+      parentObjects(
+        flows.map((f) => f.flow),
+        objectFields,
+      ),
+      options.describe,
+      objectFields,
+    );
+  }
 
   for (const { flowName, flow } of flows) {
     const test = generateApexTest(flow, objectFields);

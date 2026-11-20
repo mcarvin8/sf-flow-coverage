@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,56 @@ describe('scaffoldTests', () => {
     const invoice = readFileSync(join(out, 'Invoice_Before_Delete_FlowTest.cls'), 'utf8');
     expect(invoice).toContain('Amount__c = 1');
     expect(invoice).not.toContain('TODO: set the required fields');
+  });
+
+  it('describes the parents of required lookups and of lookups in the entry criteria', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-parents-'));
+    try {
+      mkdirSync(join(project, 'flows'));
+      writeFileSync(
+        join(project, 'flows', 'Job_Flow.flow-meta.xml'),
+        `<Flow><processType>AutoLaunchedFlow</processType><status>Active</status><start>
+          <filters><field>Contact__c</field><operator>IsNull</operator><value><booleanValue>false</booleanValue></value></filters>
+          <filterFormula>NOT(ISBLANK({!$Record.Site__c}))</filterFormula>
+          <object>Job__c</object><recordTriggerType>Create</recordTriggerType><triggerType>RecordAfterSave</triggerType>
+        </start></Flow>`,
+      );
+      const described: string[] = [];
+      const reference = (name: string, target: string, nillable = true) => ({
+        name,
+        type: 'reference',
+        nillable,
+        createable: true,
+        defaultedOnCreate: false,
+        referenceTo: [target],
+      });
+      await scaffoldTests({
+        flowNames: ['Job_Flow'],
+        projectDir: project,
+        outputDir: out,
+        describe: async (name) => {
+          described.push(name);
+          if (name !== 'Job__c')
+            return [{ name: 'Name', type: 'string', nillable: false, createable: true, defaultedOnCreate: false }];
+          return [
+            reference('Account__c', 'Account', false),
+            reference('Contact__c', 'Contact'),
+            reference('Site__c', 'Site__c'),
+            reference('Approver__c', 'User', false),
+            reference('Other__c', 'Other__c'),
+          ];
+        },
+      });
+      expect(described).toEqual(['Job__c', 'Account', 'Contact', 'Site__c']);
+      const test = readFileSync(join(out, 'Job_Flow_FlowTest.cls'), 'utf8');
+      expect(test).toContain('Account__c = accountParent.Id');
+      expect(test).toContain('Approver__c = UserInfo.getUserId()');
+      expect(test).toContain('Contact__c = contactParent.Id');
+      expect(test).toContain('Site__c = siteParent.Id');
+      expect(test).not.toContain('TODO: entry criteria');
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 
   it('does not overwrite existing classes unless forced', async () => {

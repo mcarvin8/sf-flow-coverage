@@ -3,13 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { generateApexTest } from '../../src/core/apexTemplate.js';
 import {
   apexValueForField,
+  canInsertParent,
   changedFieldValues,
   changedValueForField,
   type DescribeField,
   loadObjectFields,
+  lookupTargets,
   requiredFieldValues,
   settableFieldValues,
 } from '../../src/core/requiredFields.js';
+import type { FlowMetadata } from '../../src/core/types.js';
 
 const field = (name: string, type: string, extra: Partial<DescribeField> = {}): DescribeField => ({
   name,
@@ -102,7 +105,143 @@ describe('loadObjectFields', () => {
       requiredFields: { Installation__c: { Crew_Size__c: '1' } },
       fieldValues: { Installation__c: { Crew_Size__c: '1' } },
       changedValues: { Installation__c: { Crew_Size__c: '2' } },
+      lookups: { Installation__c: {} },
     });
+  });
+
+  it('adds to earlier results without describing an object twice', async () => {
+    const calls: string[] = [];
+    const describe = async (name: string) => {
+      calls.push(name);
+      return [field('Name', 'string')];
+    };
+    const map = await loadObjectFields(['Account'], describe);
+    await loadObjectFields(['Account', 'Contact'], describe, map);
+    expect(calls).toEqual(['Account', 'Contact']);
+    expect(Object.keys(map.requiredFields)).toEqual(['Account', 'Contact']);
+  });
+});
+
+describe('lookupTargets', () => {
+  it('lists createable lookups to a single object', () => {
+    expect(
+      lookupTargets([
+        field('Account__c', 'reference', { referenceTo: ['Account'] }),
+        field('WhatId', 'reference', { referenceTo: ['Account', 'Opportunity'] }),
+        field('CreatedById', 'reference', { referenceTo: ['User'], createable: false }),
+        field('Formula__c', 'reference', { referenceTo: ['Account'], calculated: true }),
+        field('Other__c', 'reference'),
+        field('Name', 'string'),
+      ]),
+    ).toEqual({ Account__c: 'Account' });
+  });
+});
+
+describe('canInsertParent', () => {
+  it('rejects setup objects and objects with an existing record to use', () => {
+    expect(canInsertParent('Account')).toBe(true);
+    expect(canInsertParent('Installation__c')).toBe(true);
+    for (const object of ['User', 'Pricebook2', 'RecordType', 'Profile', 'Group']) {
+      expect(canInsertParent(object), object).toBe(false);
+    }
+  });
+});
+
+describe('generateApexTest with lookups', () => {
+  const recordFlow = (overrides: Partial<FlowMetadata> = {}): FlowMetadata => ({
+    name: 'Job_Flow',
+    processType: 'AutoLaunchedFlow',
+    triggerType: 'RecordAfterSave',
+    recordTriggerType: 'Create',
+    object: 'Job__c',
+    filters: [],
+    variables: [],
+    ...overrides,
+  });
+  const requiredFields = {
+    Job__c: { Account__c: 'null /* TODO: set a Account Id */', Name: "'Test'" },
+    Account: { Name: "'Test'", Parent__c: 'null /* TODO: set a Account Id */' },
+  };
+
+  it('inserts a parent with its own required fields for a required lookup', () => {
+    const test = generateApexTest(recordFlow(), {
+      requiredFields,
+      lookups: { Job__c: { Account__c: 'Account' }, Account: { Parent__c: 'Account' } },
+    });
+    expect(test.body).toContain(
+      [
+        '        Account accountParent = new Account(',
+        "            Name = 'Test',",
+        '            Parent__c = null /* TODO: set a Account Id */',
+        '        );',
+        '        insert accountParent;',
+        '',
+        '        Job__c testRecord = new Job__c(',
+        '            Account__c = accountParent.Id,',
+      ].join('\n'),
+    );
+  });
+
+  it('fills IsNull false lookups, inserting the parent only in methods that use it', () => {
+    const test = generateApexTest(
+      recordFlow({
+        recordTriggerType: 'Update',
+        filters: [{ field: 'Contact__c', operator: 'IsNull', apexValue: 'false', rawValue: 'false' }],
+      }),
+      { requiredFields: { Contact: { LastName: "'Test'" } }, lookups: { Job__c: { Contact__c: 'Contact' } } },
+    );
+    expect(test.body).toContain('Contact contactParent = new Contact(');
+    expect(test.body).toContain('testRecord.Contact__c = contactParent.Id;');
+    expect(test.body).not.toContain('TODO: entry criteria');
+    expect(test.body.match(/insert contactParent;/g)).toHaveLength(1);
+  });
+
+  it('uses the running user and the standard price book instead of inserting them', () => {
+    const test = generateApexTest(
+      recordFlow({
+        filters: [
+          { field: 'Reviewer__c', operator: 'IsNull', apexValue: 'false', rawValue: 'false' },
+          { field: 'Pricebook__c', operator: 'IsNull', apexValue: 'false', rawValue: 'false' },
+        ],
+      }),
+      { lookups: { Job__c: { Reviewer__c: 'User', Pricebook__c: 'Pricebook2' } } },
+    );
+    expect(test.body).toContain('Reviewer__c = UserInfo.getUserId(),');
+    expect(test.body).toContain('Pricebook__c = Test.getStandardPricebookId()');
+    expect(test.body).not.toContain('Parent =');
+  });
+
+  it('keeps the TODO when the parent was not described or cannot be inserted', () => {
+    const test = generateApexTest(recordFlow(), {
+      requiredFields: {
+        Job__c: { Account__c: 'null /* TODO: set a Account Id */', Type__c: 'null /* TODO: set a RecordType Id */' },
+      },
+      lookups: { Job__c: { Account__c: 'Account', Type__c: 'RecordType' } },
+    });
+    expect(test.body).toContain('Account__c = null /* TODO: set a Account Id */');
+    expect(test.body).toContain('Type__c = null /* TODO: set a RecordType Id */');
+    expect(test.body).not.toContain('accountParent');
+  });
+
+  it('fills required lookups on sObject inputs of autolaunched Flows', () => {
+    const test = generateApexTest(
+      {
+        ...recordFlow({ triggerType: undefined, object: undefined }),
+        variables: [
+          {
+            name: 'job',
+            dataType: 'SObject',
+            objectType: 'Job__c',
+            isInput: true,
+            isOutput: false,
+            isCollection: false,
+          },
+        ],
+      },
+      { requiredFields, lookups: { Job__c: { Account__c: 'Account' } } },
+    );
+    expect(test.body).toContain('insert accountParent;');
+    expect(test.body).toContain('Account__c = accountParent.Id,');
   });
 });
 

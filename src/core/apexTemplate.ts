@@ -1,6 +1,6 @@
 import { parseFilterFormula } from './filterFormula.js';
 import { escapeApexString } from './flowXml.js';
-import type { RequiredFieldMap } from './requiredFields.js';
+import { canInsertParent, EXISTING_RECORD_IDS, type RequiredFieldMap } from './requiredFields.js';
 import type { FlowFilter, FlowMetadata, FlowVariable } from './types.js';
 
 const MAX_CLASS_NAME = 40;
@@ -419,14 +419,77 @@ export type GenerateOptions = {
   fieldValues?: RequiredFieldMap;
   /** A second value per field, different from `fieldValues`. Used to meet `IsChanged true` entry criteria. */
   changedValues?: RequiredFieldMap;
+  /** The object each lookup field points to, per object. Fills required and `IsNull false` lookups. */
+  lookups?: Record<string, Record<string, string>>;
 };
+
+type ResolvedLookups = {
+  required: RequiredFieldMap;
+  fieldValues: RequiredFieldMap;
+  /** Parent record variable to its object, for parents a test may insert. */
+  parents: Map<string, string>;
+};
+
+/**
+ * Fills lookup fields with an Id: an existing record's (the running user, the standard price
+ * book), or a parent record's the test inserts when the describe gives the parent's required
+ * fields. Other lookups keep their TODO.
+ */
+function resolveLookups(options: GenerateOptions): ResolvedLookups {
+  const required: RequiredFieldMap = { ...options.requiredFields };
+  const fieldValues: RequiredFieldMap = { ...options.fieldValues };
+  const parents = new Map<string, string>();
+  const lookupValue = (target: string): string | undefined => {
+    if (target in EXISTING_RECORD_IDS) return EXISTING_RECORD_IDS[target];
+    if (!canInsertParent(target) || !options.requiredFields?.[target]) return undefined;
+    const variable = `${camel(target) || 'record'}Parent`;
+    parents.set(variable, target);
+    return `${variable}.Id`;
+  };
+  for (const [object, fields] of Object.entries(options.lookups ?? {})) {
+    for (const [field, target] of Object.entries(fields)) {
+      const value = lookupValue(target);
+      if (value === undefined) continue;
+      if (required[object] && field in required[object]) required[object] = { ...required[object], [field]: value };
+      fieldValues[object] = { ...fieldValues[object], [field]: value };
+    }
+  }
+  return { required, fieldValues, parents };
+}
+
+const METHOD_START = /^\s+static void \w+\(\) \{$/;
+
+/**
+ * Inserts each parent record a test method uses at the top of that method. Parents get their
+ * own required fields from the describe; their lookups stay TODOs (one level deep).
+ */
+function withParentInserts(lines: string[], parents: Map<string, string>, required: RequiredFieldMap): string[] {
+  if (parents.size === 0) return lines;
+  const i2 = INDENT.repeat(2);
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    if (!METHOD_START.test(lines[i])) continue;
+    const body = lines.slice(i + 1, lines.indexOf(`${INDENT}}`, i)).join('\n');
+    const used = [...parents].filter(([variable]) => new RegExp(`\\b${variable}\\.Id\\b`).test(body));
+    for (const [variable, object] of used) {
+      out.push(
+        ...newRecord(object, variable, recordFields(object, [], required), i2, required),
+        `${i2}insert ${variable};`,
+      );
+    }
+    if (used.length > 0) out.push('');
+  }
+  return out;
+}
 
 /** Generates a starter Apex test class for a Flow from its metadata. */
 export function generateApexTest(source: FlowMetadata, options: GenerateOptions = {}): GeneratedApexTest {
   const flow = withFormulaFilters(source);
-  const required = options.requiredFields ?? {};
+  const lookups = resolveLookups(options);
+  const required = lookups.required;
   const values: CriteriaValues = {
-    fieldValues: options.fieldValues ?? {},
+    fieldValues: lookups.fieldValues,
     changedValues: options.changedValues ?? {},
   };
   const className = apexTestClassName(flow.name);
@@ -466,6 +529,7 @@ export function generateApexTest(source: FlowMetadata, options: GenerateOptions 
       methods = processMethod(flow);
   }
 
+  methods = withParentInserts(methods, lookups.parents, options.requiredFields ?? {});
   const body = [...header(flow, description), `private class ${className} {`, ...methods, '}', ''].join('\n');
   return { className, body, kind };
 }

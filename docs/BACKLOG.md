@@ -35,13 +35,18 @@ Comparisons, `Contains`/`StartsWith`/`EndsWith`, and `IsChanged` are handled. St
 - `NotEqualTo`: use a described value that differs from the literal.
 - Filters compared with another field or a resource (`$Record.Max__c`, `$User.Id`) instead of a literal.
 
-### 6. Parent records for lookups
+### 6. Deeper parent records
 
-For a required or `IsNull false` lookup (for example `Account__c`), insert the parent record with its own required fields filled, and use its Id instead of leaving a TODO.
+Required and `IsNull false` lookups get a parent record (or the running user, or the standard price book). Still left as TODOs:
+
+- A parent's own required lookups (parents are one level deep).
+- Polymorphic lookups (`WhatId`) and setup objects (`RecordType`, `Profile`, `Group`).
 
 ### 7. Real assertions
 
 Read the Flow's record updates and assignments on `$Record`, then assert those fields after the DML, replacing the placeholder `Assert.isNotNull`. Of everything here, this makes generated tests most useful.
+
+Flows with a Custom Error element need a different test: meeting the entry criteria makes the save fail on purpose (for example "Set the install date before closing this installation"), so today's generated test fails. Generate a test that expects the `DmlException` and asserts the error message, and, where the Flow's decisions show which fields avoid the error, a second test that sets them and expects the save to succeed.
 
 ## CI and reporting
 
