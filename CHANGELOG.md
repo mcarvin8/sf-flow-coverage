@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.4.1...v0.4.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **scaffold:** generate tests that pass in more real orgs ([#23](https://github.com/mcarvin8/sf-flow-coverage/issues/23)) ([04b114f](https://github.com/mcarvin8/sf-flow-coverage/commit/04b114f6930174166a22bb1118f36b0fd7411fbd))
+
 ## [0.4.1](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.4.0...v0.4.1) (2026-11-20)
 
 
