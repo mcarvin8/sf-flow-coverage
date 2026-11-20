@@ -23,8 +23,6 @@ test_session*
 stderr*.txt
 stdout*.txt
 
-# generated docs
-docs
 
 # ignore sfdx-trust files
 *.tgz
