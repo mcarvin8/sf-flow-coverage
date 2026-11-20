@@ -17,6 +17,16 @@ import { coverage, FIXTURE_PROJECT } from '../../helpers.js';
 const orgFlows = vi.hoisted(() => ({ value: [] as FlowCoverage[] }));
 const orgFingerprints = vi.hoisted(() => ({ value: {} as Record<string, FlowFingerprint> }));
 const orgHasCoverage = vi.hoisted(() => ({ value: true }));
+const orgSettings = vi.hoisted(() => ({ deployAsActive: undefined as boolean | undefined, isSandbox: false }));
+
+vi.mock('../../../src/core/toolingQuery.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/core/toolingQuery.js')>()),
+  metadataRead: () => async () =>
+    orgSettings.deployAsActive === undefined
+      ? undefined
+      : { enableFlowDeployAsActiveEnabled: orgSettings.deployAsActive },
+  dataQuery: () => async () => [{ IsSandbox: orgSettings.isSandbox }],
+}));
 
 vi.mock('../../../src/core/orgCoverageSource.js', () => ({
   OrgCoverageSource: class {
@@ -95,6 +105,27 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
         expect(gate.warnings).toHaveLength(1);
       } finally {
         orgHasCoverage.value = true;
+      }
+    });
+
+    it('says what the deploy-as-active setting means for the org', async () => {
+      orgFlows.value = [coverage('A', { covered: false }), coverage('B')];
+      try {
+        orgSettings.deployAsActive = true;
+        const production = await FlowcovReadiness.run(['--target-org', testOrg.username]);
+        expect(production).toMatchObject({ deployAsActive: true, isSandbox: false });
+        expect(ux.warn.getCalls().flatMap((c: { args: unknown[] }) => c.args)).toContainEqual(
+          expect.stringContaining('Deploy processes and flows as active is on, but coverage is below 75%'),
+        );
+
+        orgSettings.isSandbox = true;
+        await FlowcovReadiness.run(['--target-org', testOrg.username]);
+        expect(ux.log.getCalls().flatMap((c: { args: unknown[] }) => c.args)).toContainEqual(
+          expect.stringContaining('Deploy processes and flows as active is on here, but it only affects deployments'),
+        );
+      } finally {
+        orgSettings.deployAsActive = undefined;
+        orgSettings.isSandbox = false;
       }
     });
 

@@ -2,7 +2,7 @@
 
 Ideas for sf-flow-coverage, ordered by value within each section. Open an issue before starting anything large. Item numbers stay fixed because pull requests refer to them, so removed items leave gaps.
 
-Suggested first picks: [Markdown output](#9-markdown-output) and [Show the deploy-as-active setting in readiness](#3-show-the-deploy-as-active-setting-in-readiness).
+Suggested first pick: [Markdown output](#9-markdown-output).
 
 ## Gaps found in live testing
 
@@ -16,7 +16,7 @@ The gate fails when the org has no active version or a newer inactive one, and `
 
 ### 3. Show the deploy-as-active setting in readiness
 
-Read `FlowSettings` and report whether "Deploy processes and flows as active" is already on, so users know whether they are working toward the setting or protecting it.
+Done: `readiness` reads `FlowSettings.enableFlowDeployAsActiveEnabled` and `Organization.IsSandbox`, and says whether the org is working toward the setting or protecting it (or, in a sandbox, that the setting only applies to production).
 
 ## Scaffold: fewer TODOs
 

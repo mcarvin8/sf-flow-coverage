@@ -1,5 +1,6 @@
 import { missingCoverageWarning } from './coverageCheck.js';
 import { findUncoveredElements } from './elementCoverage.js';
+import { type DataQuery, type MetadataRead, readDeployAsActive, readIsSandbox } from './flowSettings.js';
 import { DEFAULT_THRESHOLD, isProcessBuilder } from './flowTypes.js';
 import type { CoverageSource, ReadinessFlow, ReadinessResult } from './types.js';
 
@@ -8,6 +9,10 @@ export type ReadinessOptions = {
   /** Commit counts per Flow API name, used to rank uncovered Flows. */
   churn?: Map<string, number>;
   threshold?: number;
+  /** Reads org settings, to report whether deploy-as-active is already on. */
+  metadataRead?: MetadataRead;
+  /** Queries org data, to tell production from sandboxes for the deploy-as-active advice. */
+  dataQuery?: DataQuery;
 };
 
 /**
@@ -58,6 +63,8 @@ export async function buildReadinessReport(options: ReadinessOptions): Promise<R
     flowsNeeded,
     processBuilderProcesses: flows.filter((f) => isProcessBuilder(f.processType)).length,
     flows,
+    deployAsActive: options.metadataRead ? await readDeployAsActive(options.metadataRead) : undefined,
+    isSandbox: options.dataQuery ? await readIsSandbox(options.dataQuery) : undefined,
     warnings: warning ? [warning] : [],
   };
 }
