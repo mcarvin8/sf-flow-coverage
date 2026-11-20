@@ -65,6 +65,8 @@ function versionInfo(definition: FlowDefinitionRecord): Pick<FlowCoverage, 'vers
 
 /** Reads Flow coverage from FlowTestCoverage, which Salesforce fills in when Apex tests run in the org. */
 export class OrgCoverageSource implements CoverageSource {
+  private readonly fingerprints = new Map<string, Promise<FlowFingerprint | undefined>>();
+
   public constructor(private readonly query: ToolingQuery) {}
 
   public async listActiveCountedFlows(): Promise<FlowCoverage[]> {
@@ -105,7 +107,18 @@ export class OrgCoverageSource implements CoverageSource {
    * The Tooling API returns `Flow.Metadata` only when a query returns one row, so this reads one
    * version per query. Returns undefined when the query fails or returns no content.
    */
-  public async getFlowFingerprint(flowVersionId: string): Promise<FlowFingerprint | undefined> {
+  public getFlowFingerprint(flowVersionId: string): Promise<FlowFingerprint | undefined> {
+    // The gate's content check and its uncovered-element list both ask for the same versions.
+    const key = idKey(flowVersionId);
+    let fingerprint = this.fingerprints.get(key);
+    if (!fingerprint) {
+      fingerprint = this.readFingerprint(flowVersionId);
+      this.fingerprints.set(key, fingerprint);
+    }
+    return fingerprint;
+  }
+
+  private async readFingerprint(flowVersionId: string): Promise<FlowFingerprint | undefined> {
     try {
       const [record] = await this.query<{ Metadata?: unknown }>(
         `SELECT Metadata FROM Flow WHERE Id = ${soqlList([flowVersionId])}`,
@@ -150,10 +163,10 @@ export class OrgCoverageSource implements CoverageSource {
         ...rows.map((r) => (r.NumElementsCovered ?? 0) + (r.NumElementsNotCovered ?? 0)),
       );
       const bestSingleTest = Math.max(0, ...rows.map((r) => r.NumElementsCovered ?? 0));
-      const unionAcrossTests = coveredElements
-        ? new Set(rows.flatMap((r) => [...(coveredElements.get(idKey(r.Id)) ?? [])])).size
-        : 0;
-      const elementsCovered = Math.min(Math.max(bestSingleTest, unionAcrossTests), elementsTotal);
+      const coveredNames = coveredElements
+        ? new Set(rows.flatMap((r) => [...(coveredElements.get(idKey(r.Id)) ?? [])]))
+        : undefined;
+      const elementsCovered = Math.min(Math.max(bestSingleTest, coveredNames?.size ?? 0), elementsTotal);
       const tests: FlowTestRef[] = rows.map((r) => ({
         className: (r.ApexTestClassId && classNames.get(idKey(r.ApexTestClassId))) || r.ApexTestClassId || 'unknown',
         methodName: r.TestMethodName ?? 'unknown',
@@ -169,6 +182,7 @@ export class OrgCoverageSource implements CoverageSource {
         elementsTotal,
         elementCoveragePercent: elementsTotal > 0 ? Math.round((elementsCovered / elementsTotal) * 1000) / 10 : 0,
         tests,
+        coveredElementNames: coveredNames && [...coveredNames].sort(),
       };
     });
   }

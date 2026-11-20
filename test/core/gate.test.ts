@@ -89,6 +89,35 @@ describe('evaluateGate', () => {
     expect(result.flows[1].status).toBe('pass');
   });
 
+  it('names the elements no test ran, in the reason when the Flow fails', async () => {
+    const low = coverage('Low', {
+      elementCoveragePercent: 40,
+      elementsCovered: 2,
+      elementsTotal: 5,
+      coveredElementNames: ['a', 'b'],
+    });
+    const ok = coverage('Ok', { elementsCovered: 1, elementsTotal: 2, coveredElementNames: ['a'] });
+    const full = coverage('Full', { elementCoveragePercent: 30, elementsCovered: 2, elementsTotal: 2 });
+    const elements = ['decisions:A', 'decisions:B', 'assignments:C', 'recordUpdates:D', 'customErrors:E'];
+    const source = {
+      ...fakeSource([low, ok, full]),
+      getFlowFingerprint: async (id: string) =>
+        id === low.flowVersionId || id === ok.flowVersionId ? { filters: [], elements } : undefined,
+    };
+    const result = await evaluateGate({
+      source,
+      candidates: [{ flowName: 'Low' }, { flowName: 'Ok' }, { flowName: 'Full' }],
+      minElementCoverage: 50,
+    });
+    expect(result.flows[0].reason).toBe(
+      'Element coverage 40% is below the required 50%. Not run by any test: C (assignment), D (recordUpdate), E (customError).',
+    );
+    expect(result.flows[1]).toMatchObject({ status: 'pass', reason: 'Covered by 1 test method(s).' });
+    expect(result.flows[1].uncoveredElements).toHaveLength(4);
+    expect(result.flows[2]).toMatchObject({ status: 'fail', uncoveredElements: [] });
+    expect(result.flows[2].reason).toBe('Element coverage 30% is below the required 50%.');
+  });
+
   it('fails Flows that could not be parsed without asking the org', async () => {
     const result = await evaluateGate({
       source: fakeSource([]),

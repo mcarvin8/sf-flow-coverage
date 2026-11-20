@@ -52,6 +52,20 @@ describe('buildReadinessReport', () => {
     expect((await buildReadinessReport({ source: fakeSource(flows), threshold: 71 })).flowsNeeded).toBe(1);
   });
 
+  it('lists the elements no test ran for partly covered Flows', async () => {
+    const partial = coverage('Partial', { elementsCovered: 1, elementsTotal: 2, coveredElementNames: ['check'] });
+    const result = await buildReadinessReport({
+      source: {
+        ...fakeSource([partial, coverage('Bare', { covered: false })]),
+        getFlowFingerprint: async () => ({ filters: [], elements: ['decisions:Check', 'assignments:Set'] }),
+      },
+    });
+    expect(result.flows.map((f) => [f.flowName, f.uncoveredElements])).toEqual([
+      ['Bare', undefined],
+      ['Partial', [{ name: 'Set', type: 'assignment' }]],
+    ]);
+  });
+
   it('treats an org with no active Flows as ready', async () => {
     const result = await buildReadinessReport({ source: fakeSource([]) });
     expect(result).toMatchObject({ totalFlows: 0, coveragePercent: 100, ready: true, flowsNeeded: 0 });

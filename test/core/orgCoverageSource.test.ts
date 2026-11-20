@@ -87,6 +87,7 @@ describe('OrgCoverageSource.listActiveCountedFlows', () => {
           { className: 'FlowTests', methodName: 'one' },
           { className: 'ns.MoreTests', methodName: 'two' },
         ],
+        coveredElementNames: ['a', 'b', 'c'],
       },
       {
         flowName: 'ns__Bare_Flow',
@@ -99,6 +100,7 @@ describe('OrgCoverageSource.listActiveCountedFlows', () => {
         elementsTotal: 0,
         elementCoveragePercent: 0,
         tests: [],
+        coveredElementNames: [],
       },
     ]);
   });
@@ -128,6 +130,7 @@ describe('OrgCoverageSource.listActiveCountedFlows', () => {
     const [flow] = await new OrgCoverageSource(query).listActiveCountedFlows();
     expect(flow.elementsCovered).toBe(3);
     expect(flow.elementCoveragePercent).toBe(75);
+    expect(flow.coveredElementNames).toBeUndefined();
     expect(flow.tests).toEqual([
       { className: 'unknown', methodName: 'unknown' },
       { className: '01p000000000009AAA', methodName: 'unknown' },
@@ -255,6 +258,14 @@ describe('OrgCoverageSource.getFlowFingerprint', () => {
       elements: ['decisions:D'],
     });
     expect(calls).toEqual([`SELECT Metadata FROM Flow WHERE Id = '${A}'`]);
+  });
+
+  it('reads each version once', async () => {
+    const { query, calls } = fakeQuery({ Flow: [{ Metadata: { decisions: [{ name: 'D' }] } }] });
+    const source = new OrgCoverageSource(query);
+    const [first, again] = await Promise.all([source.getFlowFingerprint(A), source.getFlowFingerprint(A.slice(0, 15))]);
+    expect(again).toBe(first);
+    expect(calls).toHaveLength(1);
   });
 
   it('returns undefined when the version or its metadata cannot be read', async () => {

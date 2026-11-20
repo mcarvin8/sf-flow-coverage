@@ -4,7 +4,7 @@ Report how close the org is to the coverage needed to deploy Flows as active.
 
 # description
 
-Salesforce requires 75% of active autolaunched Flows and processes to be run by at least one Apex test before you can turn on "Deploy processes and flows as active". This command reads FlowTestCoverage from the target org, reports the org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and the Apex tests that already run each covered Flow.
+Salesforce requires 75% of active autolaunched Flows and processes to be run by at least one Apex test before you can turn on "Deploy processes and flows as active". This command reads FlowTestCoverage from the target org, reports the org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and, for each covered Flow, the Apex tests that run it and the elements no test runs yet. Listing those elements takes one Tooling API query per partly covered Flow.
 
 FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first with coverage turned on (for example, `sf apex run test --test-level RunLocalTests --code-coverage --wait 60`) so the report is current. Without `--code-coverage`, Salesforce records no Flow coverage.
 

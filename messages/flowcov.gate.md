@@ -12,6 +12,8 @@ The gate also fails a Flow when the org has no active version of it, or when its
 
 With --from, the gate also compares each changed Flow at --to with the org's version: process type, start trigger and entry criteria, and the names of its elements and resources. A difference usually means the branch wasn't deployed to the org. By default this is a warning; use --content-check to fail instead, or to skip the comparison. The comparison doesn't look inside elements, so it can miss a change that only edits an existing element.
 
+For a Flow that tests run only in part, the --json output lists the elements no test runs, and a Flow that fails --min-element-coverage names them in its reason.
+
 Exits with code 1 when any Flow fails.
 
 # examples
