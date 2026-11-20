@@ -147,7 +147,7 @@ EXAMPLES
     $ sf flowcov gate --target-org ci-sandbox --flow Account_After_Save --flow Close_Cases
 ```
 
-_See code: [src/commands/flowcov/gate.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/v0.0.0/src/commands/flowcov/gate.ts)_
+_See code: [src/commands/flowcov/gate.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/gate.ts)_
 
 ## `sf flowcov readiness`
 
@@ -196,7 +196,7 @@ EXAMPLES
     $ sf flowcov readiness --target-org prod --fail-if-not-ready
 ```
 
-_See code: [src/commands/flowcov/readiness.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/v0.0.0/src/commands/flowcov/readiness.ts)_
+_See code: [src/commands/flowcov/readiness.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/readiness.ts)_
 
 ## `sf flowcov scaffold`
 
@@ -248,7 +248,7 @@ EXAMPLES
     $ sf flowcov scaffold --flow Account_After_Save --dry-run
 ```
 
-_See code: [src/commands/flowcov/scaffold.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/v0.0.0/src/commands/flowcov/scaffold.ts)_
+_See code: [src/commands/flowcov/scaffold.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/scaffold.ts)_
 <!-- commandsstop -->
 
 ## Programmatic API
