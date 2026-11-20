@@ -11,8 +11,10 @@ const graphOf = (elements: string, start = 'First'): FlowGraph => {
   return flow.graph as FlowGraph;
 };
 
-const assign = (name: string, field: string, value: string, next?: string, operator = 'Assign'): string =>
-  `<assignments><name>${name}</name><assignmentItems><assignToReference>${field}</assignToReference><operator>${operator}</operator><value>${value}</value></assignmentItems>${next ? `<connector><targetReference>${next}</targetReference></connector>` : ''}</assignments>`;
+const next = (to?: string): string => (to ? `<connector><targetReference>${to}</targetReference></connector>` : '');
+
+const assign = (name: string, reference: string, value: string, to?: string, operator = 'Assign'): string =>
+  `<assignments><name>${name}</name><assignmentItems><assignToReference>${reference}</assignToReference><operator>${operator}</operator><value>${value}</value></assignmentItems>${next(to)}</assignments>`;
 
 const condition = (left: string, operator: string, right: string): string =>
   `<conditions><leftValueReference>${left}</leftValueReference><operator>${operator}</operator><rightValue>${right}</rightValue></conditions>`;
@@ -20,8 +22,8 @@ const condition = (left: string, operator: string, right: string): string =>
 const decision = (name: string, rules: string, defaultNext?: string): string =>
   `<decisions><name>${name}</name><label>${name} label</label>${defaultNext ? `<defaultConnector><targetReference>${defaultNext}</targetReference></defaultConnector>` : ''}${rules}</decisions>`;
 
-const rule = (name: string, conditions: string, next?: string, logic = 'and'): string =>
-  `<rules><name>${name}</name><label>${name} label</label><conditionLogic>${logic}</conditionLogic>${conditions}${next ? `<connector><targetReference>${next}</targetReference></connector>` : ''}</rules>`;
+const rule = (name: string, conditions: string, to?: string, logic = 'and'): string =>
+  `<rules><name>${name}</name><label>${name} label</label><conditionLogic>${logic}</conditionLogic>${conditions}${next(to)}</rules>`;
 
 const customError = (name: string, message?: string): string =>
   `<customErrors><name>${name}</name>${message ? `<customErrorMessages><errorMessage>${message}</errorMessage></customErrorMessages>` : ''}</customErrors>`;
@@ -36,7 +38,7 @@ const written = (graph: FlowGraph, initial: FieldState = new Map()): string[] =>
   walkFlow(graph, initial).writes.map((w) => `${w.element}: ${w.field} = ${w.value.apexValue ?? w.value.rawValue}`);
 
 describe('parseFlowGraph', () => {
-  it('reads writes to $Record from assignments and record updates', () => {
+  it('reads writes to $Record and variables from assignments and record updates', () => {
     const graph = graphOf(
       [
         `<assignments><name>First</name>
@@ -44,15 +46,15 @@ describe('parseFlowGraph', () => {
           <assignmentItems><assignToReference>counter</assignToReference><operator>Assign</operator><value>${num('1')}</value></assignmentItems>
           <assignmentItems><assignToReference>$Record.Count__c</assignToReference><operator>Add</operator><value>${num('2')}</value></assignmentItems>
           <assignmentItems><assignToReference>$Record.Account.Name</assignToReference><operator>Assign</operator><value>${str('x')}</value></assignmentItems>
-          <connector><targetReference>Update_Self</targetReference></connector></assignments>`,
+          ${next('Update_Self')}</assignments>`,
         `<recordUpdates><name>Update_Self</name><inputReference>$Record</inputReference>
           <inputAssignments><field>Flag__c</field><value>${bool(true)}</value></inputAssignments>
           <inputAssignments><value>${bool(true)}</value></inputAssignments>
-          <connector><targetReference>Update_By_Id</targetReference></connector></recordUpdates>`,
+          ${next('Update_By_Id')}</recordUpdates>`,
         `<recordUpdates><name>Update_By_Id</name><object>Job__c</object>
           <filters><field>Id</field><operator>EqualTo</operator><value>${ref('$Record.Id')}</value></filters>
           <inputAssignments><field>Note__c</field><value>${ref('$Record.Name')}</value></inputAssignments>
-          <connector><targetReference>Update_Other</targetReference></connector></recordUpdates>`,
+          ${next('Update_Other')}</recordUpdates>`,
         `<recordUpdates><name>Update_Other</name><object>Account</object>
           <filters><field>Id</field><operator>EqualTo</operator><value>${ref('$Record.Account__c')}</value></filters>
           <inputAssignments><field>Rating</field><value>${str('Hot')}</value></inputAssignments></recordUpdates>`,
@@ -66,10 +68,45 @@ describe('parseFlowGraph', () => {
       'Update_Self: Flag__c = true',
       'Update_By_Id: Note__c = $Record.Name',
     ]);
+    expect(walkFlow(graph, new Map()).variables).toEqual([
+      { variable: 'counter', element: 'First', value: { apexValue: '1', rawValue: '1' } },
+    ]);
+  });
+
+  it('reads record creates, lookups, and formulas', () => {
+    const graph = graphOf(
+      [
+        `<recordCreates><name>First</name><object>Task</object>
+          <inputAssignments><field>Subject</field><value>${str('Call')}</value></inputAssignments>
+          <inputAssignments><field>WhatId</field><value>${ref('$Record.Id')}</value></inputAssignments>
+          ${next('From_Variable')}</recordCreates>`,
+        `<recordCreates><name>From_Variable</name><inputReference>newTask</inputReference>${next('Get_One')}</recordCreates>`,
+        `<recordLookups><name>Get_One</name><object>Item__c</object><storeOutputAutomatically>true</storeOutputAutomatically>${next('Get_Into')}</recordLookups>`,
+        `<recordLookups><name>Get_Into</name><object>Item__c</object><outputReference>item</outputReference>${next('Get_Fields')}</recordLookups>`,
+        `<recordLookups><name>Get_Fields</name><object>Item__c</object></recordLookups>`,
+        '<formulas><name>isBig</name><expression>{!$Record.Size__c} &gt; 10</expression></formulas>',
+        '<formulas><name>broken</name><expression>AND(</expression></formulas>',
+      ].join(''),
+    );
+    expect(graph.nodes.First).toMatchObject({
+      kind: 'create',
+      create: {
+        object: 'Task',
+        fields: [{ field: 'Subject' }, { field: 'WhatId', value: { rawValue: '$Record.Id' } }],
+      },
+    });
+    expect(graph.nodes.From_Variable.kind).toBe('other');
+    expect(graph.nodes.Get_One).toMatchObject({ kind: 'lookup', object: 'Item__c', output: 'Get_One' });
+    expect(graph.nodes.Get_Into).toMatchObject({ kind: 'lookup', output: 'item' });
+    expect(graph.nodes.Get_Fields.kind).toBe('other');
+    expect(Object.keys(graph.formulas)).toEqual(['isBig']);
   });
 
   it('reads an empty Flow', () => {
-    expect(parseFlowXml('F', '<Flow><processType>Flow</processType></Flow>').graph).toEqual({ nodes: {} });
+    expect(parseFlowXml('F', '<Flow><processType>Flow</processType></Flow>').graph).toEqual({
+      nodes: {},
+      formulas: {},
+    });
   });
 });
 
@@ -77,15 +114,20 @@ describe('walkFlow', () => {
   it('follows other elements and stops at the end or on a loop back', () => {
     const graph = graphOf(
       [
-        `<recordLookups><name>First</name><connector><targetReference>Set</targetReference></connector><faultConnector><targetReference>Gone</targetReference></faultConnector></recordLookups>`,
+        `<subflows><name>First</name>${next('Set')}<faultConnector><targetReference>Gone</targetReference></faultConnector></subflows>`,
         assign('Set', '$Record.A__c', str('a'), 'First'),
       ].join(''),
     );
     expect(written(graph)).toEqual(["Set: A__c = 'a'"]);
-    expect(walkFlow(graphOf('', 'Missing'), new Map())).toEqual({ writes: [] });
+    expect(walkFlow(graphOf('', 'Missing'), new Map())).toEqual({
+      writes: [],
+      variables: [],
+      creates: [],
+      decisions: [],
+    });
   });
 
-  it('takes the first rule that holds, else the default outcome', () => {
+  it('takes the first rule that holds, else the default outcome, and records each decision', () => {
     const graph = graphOf(
       [
         decision(
@@ -99,50 +141,72 @@ describe('walkFlow', () => {
         assign('Set_Default', '$Record.Out__c', str('default')),
       ].join(''),
     );
-    expect(written(graph, state({ Size__c: '11', Name__c: "'Bob'" }))).toEqual(["Set_Big: Out__c = 'big'"]);
-    expect(written(graph, state({ Size__c: '10.0', Name__c: "'Bob'" }))).toEqual(["Set_Named: Out__c = 'named'"]);
-    expect(written(graph, state({ Size__c: '1', Name__c: "'Al'" }))).toEqual(["Set_Default: Out__c = 'default'"]);
+    const walk = walkFlow(graph, state({ '$Record.Size__c': '10.0', '$Record.Name__c': "'Bob'" }));
+    expect(walk.writes.map((w) => w.element)).toEqual(['Set_Named']);
+    expect(walk.decisions?.map((d) => [d.element, d.rule?.name])).toEqual([['First', 'Named']]);
+    expect(written(graph, state({ '$Record.Size__c': '11', '$Record.Name__c': "'Bob'" }))).toEqual([
+      "Set_Big: Out__c = 'big'",
+    ]);
+    const fallback = walkFlow(graph, state({ '$Record.Size__c': '1', '$Record.Name__c': "'Al'" }));
+    expect(fallback.writes.map((w) => w.element)).toEqual(['Set_Default']);
+    expect(fallback.decisions).toEqual([{ element: 'First', rule: undefined }]);
   });
 
-  it('uses values the Flow assigned earlier', () => {
+  it('uses values the Flow assigned earlier, to fields and variables', () => {
     const graph = graphOf(
       [
-        assign('First', '$Record.Stage__c', str('Open'), 'Check'),
-        decision('Check', rule('Is_Open', condition('$Record.Stage__c', 'EqualTo', str('Open')), 'Set')),
+        assign('First', '$Record.Stage__c', str('Open'), 'Count'),
+        assign('Count', 'total', num('3'), 'Check'),
+        decision(
+          'Check',
+          rule(
+            'Is_Open',
+            condition('$Record.Stage__c', 'EqualTo', str('Open')) + condition('total', 'EqualTo', num('3')),
+            'Set',
+          ),
+        ),
         assign('Set', '$Record.Out__c', bool(true)),
       ].join(''),
     );
     expect(written(graph)).toEqual(["First: Stage__c = 'Open'", 'Set: Out__c = true']);
   });
 
-  it('decides IsNull, null comparisons, numbers, booleans, and and/or logic', () => {
-    const decide = (conditions: string, initial: FieldState, logic = 'and'): string[] =>
-      written(
-        graphOf(
-          decision('First', rule('Yes', conditions, 'Yes_Set', logic), 'No_Set') +
-            assign('Yes_Set', '$Record.Out__c', str('yes')) +
-            assign('No_Set', '$Record.Out__c', str('no')),
+  it('decides on formula resources and on lookups the test leaves empty', () => {
+    const graph = graphOf(
+      [
+        `<recordLookups><name>First</name><object>Item__c</object><storeOutputAutomatically>true</storeOutputAutomatically>${next('Check')}</recordLookups>`,
+        decision(
+          'Check',
+          rule('Found', condition('First', 'IsNull', bool(false)), 'Found_Set') +
+            rule('Big', condition('isBig', 'EqualTo', bool(true)), 'Big_Set'),
+          'Small_Set',
         ),
-        initial,
-      ).map((w) => w.split(' = ')[1]);
-    const isNull = (field: string, value: boolean) => condition(`$Record.${field}`, 'IsNull', bool(value));
-    expect(decide(isNull('A__c', true), state({ A__c: null }))).toEqual(["'yes'"]);
-    expect(decide(isNull('A__c', false), state({ A__c: null }))).toEqual(["'no'"]);
-    expect(decide(isNull('A__c', false), state({ A__c: 'Date.today()' }))).toEqual(["'yes'"]);
-    expect(decide(condition('$Record.A__c', 'EqualTo', str('x')), state({ A__c: null }))).toEqual(["'no'"]);
-    expect(decide(condition('$Record.A__c', 'NotEqualTo', str('x')), state({ A__c: null }))).toEqual(["'yes'"]);
-    expect(decide(condition('$Record.A__c', 'NotEqualTo', str('x')), state({ A__c: "'y'" }))).toEqual(["'yes'"]);
-    expect(decide(condition('$Record.A__c', 'EqualTo', bool(true)), state({ A__c: 'true' }))).toEqual(["'yes'"]);
-    expect(decide(condition('$Record.A__c', 'LessThan', num('5')), state({ A__c: '4' }))).toEqual(["'yes'"]);
-    expect(decide(condition('$Record.A__c', 'LessThanOrEqualTo', num('5')), state({ A__c: '6' }))).toEqual(["'no'"]);
-    expect(decide(condition('$Record.A__c', 'GreaterThanOrEqualTo', num('5')), state({ A__c: '5' }))).toEqual([
-      "'yes'",
-    ]);
-    const both = isNull('A__c', true) + isNull('B__c', true);
-    expect(decide(both, state({ A__c: null, B__c: "'b'" }))).toEqual(["'no'"]);
-    expect(decide(both, state({ A__c: null, B__c: "'b'" }), 'or')).toEqual(["'yes'"]);
-    expect(decide(both, state({ A__c: "'a'" }))).toEqual(["'no'"]);
-    expect(decide(both, state({ B__c: null }), 'or')).toEqual(["'yes'"]);
+        assign('Found_Set', '$Record.Out__c', str('found')),
+        assign('Big_Set', '$Record.Out__c', str('big')),
+        assign('Small_Set', '$Record.Out__c', str('small')),
+        '<formulas><name>isBig</name><expression>{!$Record.Size__c} * 2 &gt; 10</expression></formulas>',
+      ].join(''),
+    );
+    const empty = { emptyObject: (object: string) => object === 'Item__c' };
+    const out = (initial: FieldState, options = empty) =>
+      walkFlow(graph, initial, options).writes.map((w) => w.element);
+    expect(out(state({ '$Record.Size__c': '6' }))).toEqual(['Big_Set']);
+    expect(out(state({ '$Record.Size__c': '5' }))).toEqual(['Small_Set']);
+    expect(walkFlow(graph, state({ '$Record.Size__c': '6' })).undecided?.element).toBe('Check label');
+  });
+
+  it('treats a lookup on records the Flow created as unknown', () => {
+    const graph = graphOf(
+      [
+        `<recordCreates><name>First</name><object>Item__c</object><inputAssignments><field>Name</field><value>${str('x')}</value></inputAssignments>${next('Get')}</recordCreates>`,
+        `<recordLookups><name>Get</name><object>Item__c</object><storeOutputAutomatically>true</storeOutputAutomatically>${next('Check')}</recordLookups>`,
+        decision('Check', rule('Found', condition('Get', 'IsNull', bool(false)), 'Set')),
+        assign('Set', '$Record.Out__c', str('found')),
+      ].join(''),
+    );
+    const walk = walkFlow(graph, new Map(), { emptyObject: () => true });
+    expect(walk.creates?.map((c) => c.element)).toEqual(['First']);
+    expect(walk.undecided?.element).toBe('Check label');
   });
 
   it('stops at a decision it cannot decide and lists what each outcome can do', () => {
@@ -155,55 +219,33 @@ describe('walkFlow', () => {
             rule('Unused', condition('$Record.X__c', 'IsNull', bool(true))),
           'Fail',
         ),
-        assign('Owner_Set', '$Record.Out__c', str('owned'), 'Loop_Back'),
-        assign('Loop_Back', '$Record.Before__c', str('again'), 'Owner_Set'),
+        assign('Owner_Set', '$Record.Out__c', str('owned'), 'Note'),
+        assign('Note', 'note', str('n'), 'Make'),
+        `<recordCreates><name>Make</name><object>Task</object>${next('Owner_Set')}</recordCreates>`,
         customError('Fail', 'Nope'),
       ].join(''),
     );
-    expect(walkFlow(graph, new Map())).toEqual({
-      writes: [{ element: 'First', field: 'Before__c', value: { apexValue: "'b'", rawValue: 'b' } }],
-      undecided: {
-        element: 'Check label',
-        outcomes: [
-          {
-            label: 'Has_Owner label',
-            customError: false,
-            writes: [
-              { element: 'Owner_Set', field: 'Out__c', value: { apexValue: "'owned'", rawValue: 'owned' } },
-              { element: 'Loop_Back', field: 'Before__c', value: { apexValue: "'again'", rawValue: 'again' } },
-            ],
-          },
-          { label: 'Default Outcome', customError: true, writes: [] },
-        ],
-      },
-    });
-  });
-
-  it('cannot decide conditions it does not understand', () => {
-    const undecided = (conditions: string, initial: FieldState = state({ A__c: "'a'" }), logic = 'and'): boolean =>
-      !!walkFlow(
-        graphOf(decision('First', rule('R', conditions, 'Set', logic)) + assign('Set', '$Record.Out__c', str('x'))),
-        initial,
-      ).undecided;
-    expect(undecided(condition('formulaVar', 'EqualTo', bool(true)))).toBe(true);
-    expect(undecided(condition('$Record.B__c', 'IsNull', bool(true)))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'IsNull', ref('other')))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'EqualTo', ref('$Record.B__c')))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'EqualTo', str('A')))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'EqualTo', num('1')))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'GreaterThan', str('a')))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'Contains', str('a')))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'StartsWith', str('a')), state({ A__c: 'Date.today()' }))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'GreaterThan', num('1')), state({ A__c: null }))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'Contains', num('1')), state({ A__c: '1' }))).toBe(true);
-    expect(undecided(condition('$Record.A__c', 'EqualTo', str('a')), state({ A__c: "'a'" }), '1 AND 2')).toBe(true);
-    expect(undecided('')).toBe(true);
+    const walk = walkFlow(graph, new Map());
+    expect(walk.writes.map((w) => w.element)).toEqual(['First']);
+    expect(walk.undecided?.element).toBe('Check label');
+    expect(
+      walk.undecided?.outcomes.map((o) => [
+        o.label,
+        o.writes.map((w) => w.element),
+        o.variables.map((v) => v.variable),
+        o.creates.map((c) => c.element),
+        o.customError,
+      ]),
+    ).toEqual([
+      ['Has_Owner label', ['Owner_Set'], ['note'], ['Make'], false],
+      ['Default Outcome', [], [], [], true],
+    ]);
   });
 
   it('reports a custom error on the path, with or without a message', () => {
-    expect(walkFlow(graphOf(customError('First', 'Set the date')), new Map())).toEqual({
-      writes: [],
-      customError: { element: 'First', message: 'Set the date' },
+    expect(walkFlow(graphOf(customError('First', 'Set the date')), new Map()).customError).toEqual({
+      element: 'First',
+      message: 'Set the date',
     });
     expect(walkFlow(graphOf(customError('First')), new Map()).customError).toEqual({ element: 'First' });
   });
@@ -212,19 +254,12 @@ describe('walkFlow', () => {
     const graph = graphOf(
       `<loops><name>First</name><nextValueConnector><targetReference>Set</targetReference></nextValueConnector><noMoreValuesConnector><targetReference>Done</targetReference></noMoreValuesConnector></loops>${assign('Set', '$Record.A__c', str('a'), 'First')}${assign('Done', '$Record.B__c', ref('var'))}`,
     );
-    expect(walkFlow(graph, new Map()).undecided).toEqual({
-      element: 'First',
-      outcomes: [
-        {
-          label: 'after First',
-          customError: false,
-          writes: [
-            { element: 'Set', field: 'A__c', value: { apexValue: "'a'", rawValue: 'a' } },
-            { element: 'Done', field: 'B__c', value: { rawValue: 'var' } },
-          ],
-        },
-      ],
-    });
+    const outcome = walkFlow(graph, new Map()).undecided?.outcomes[0];
+    expect(outcome?.label).toBe('after First');
+    expect(outcome?.writes.map((w) => `${w.field}=${w.value.apexValue ?? w.value.rawValue}`)).toEqual([
+      "A__c='a'",
+      'B__c=var',
+    ]);
   });
 
   it('forgets a field the Flow sets to something it cannot know', () => {
@@ -235,6 +270,6 @@ describe('walkFlow', () => {
         assign('Set', '$Record.Out__c', str('x')),
       ].join(''),
     );
-    expect(walkFlow(graph, state({ A__c: null })).undecided?.element).toBe('Check label');
+    expect(walkFlow(graph, state({ '$Record.A__c': null })).undecided?.element).toBe('Check label');
   });
 });

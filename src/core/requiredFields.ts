@@ -12,6 +12,8 @@ export type DescribeField = {
   length?: number;
   picklistValues?: Array<{ value: string; active: boolean; defaultValue?: boolean }> | null;
   referenceTo?: string[] | null;
+  /** The field's default value, such as a checkbox's `true` or `false`. */
+  defaultValue?: unknown;
   /** For lookups, the relationship name used in paths such as `Account__r.Type`. */
   relationshipName?: string | null;
 };
@@ -159,8 +161,8 @@ export type ObjectFields = {
   relationships: Record<string, Record<string, string>>;
   /** How many record types each object has, including Master, when the describe says. */
   recordTypes: Record<string, number>;
-  /** Fields that stay empty when a test doesn't set them (no default value), per object. */
-  nullWhenUnset: Record<string, string[]>;
+  /** What a new record holds in each field a test doesn't set, per object (see `unsetFieldValues`). */
+  unsetValues: Record<string, Record<string, string | null>>;
 };
 
 export const emptyObjectFields = (): ObjectFields => ({
@@ -170,7 +172,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   lookups: {},
   relationships: {},
   recordTypes: {},
-  nullWhenUnset: {},
+  unsetValues: {},
 });
 
 /** Lookup targets a test points at an existing record instead of inserting one. */
@@ -198,21 +200,30 @@ export const canInsertParent = (object: string): boolean =>
   !NOT_INSERTABLE.has(object) && !(object in EXISTING_RECORD_IDS);
 
 /**
- * Fields a new record leaves empty unless the test sets them: createable, nillable, and with no
- * default value. Lets a test know how the Flow's decisions read the fields it doesn't set.
+ * What a new record holds in each field the test doesn't set, as an Apex literal (or `null`):
+ * empty for nillable fields with no default, a checkbox's default, and the default picklist
+ * value when the object has no record types that could change it (`recordTypes` of 1 or
+ * fewer). Lets a test follow the Flow's decisions on fields it doesn't set.
  */
-export function nullWhenUnsetFields(fields: DescribeField[]): string[] {
-  return fields
-    .filter(
-      (field) =>
-        field.createable &&
-        field.nillable &&
-        !field.defaultedOnCreate &&
-        !field.calculated &&
-        !field.autoNumber &&
-        !(field.picklistValues ?? []).some((value) => value.defaultValue),
-    )
-    .map((field) => field.name);
+export function unsetFieldValues(fields: DescribeField[], recordTypes?: number): Record<string, string | null> {
+  const values: Record<string, string | null> = {};
+  for (const field of fields) {
+    if (!field.createable || field.calculated || field.autoNumber) continue;
+    const pickDefault = (field.picklistValues ?? []).find((value) => value.active && value.defaultValue);
+    if (field.type === 'boolean' && (field.defaultValue === true || field.defaultValue === false)) {
+      values[field.name] = String(field.defaultValue);
+    } else if (field.type === 'boolean' && (field.defaultValue === 'true' || field.defaultValue === 'false')) {
+      values[field.name] = field.defaultValue;
+    } else if (pickDefault) {
+      // Record types can give a picklist a different default.
+      if (field.type === 'picklist' && recordTypes !== undefined && recordTypes <= 1) {
+        values[field.name] = `'${escapeApexString(pickDefault.value)}'`;
+      }
+    } else if (field.nillable && !field.defaultedOnCreate) {
+      values[field.name] = null;
+    }
+  }
+  return values;
 }
 
 /** Lookup field per relationship name, for criteria on related records. */
@@ -269,7 +280,7 @@ export async function loadObjectFields(
       into.changedValues[object] = changedFieldValues(fields);
       into.lookups[object] = lookupTargets(fields);
       into.relationships[object] = relationshipLookups(fields);
-      into.nullWhenUnset[object] = nullWhenUnsetFields(fields);
+      into.unsetValues[object] = unsetFieldValues(fields, into.recordTypes[object]);
     }
   }
   return into;

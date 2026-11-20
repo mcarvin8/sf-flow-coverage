@@ -9,9 +9,9 @@ import {
   type DescribeField,
   loadObjectFields,
   lookupTargets,
-  nullWhenUnsetFields,
   requiredFieldValues,
   settableFieldValues,
+  unsetFieldValues,
 } from '../../src/core/requiredFields.js';
 import type { FlowMetadata } from '../../src/core/types.js';
 
@@ -107,7 +107,7 @@ describe('loadObjectFields', () => {
       fieldValues: { Installation__c: { Crew_Size__c: '1' } },
       changedValues: { Installation__c: { Crew_Size__c: '2' } },
       lookups: { Installation__c: {} },
-      nullWhenUnset: { Installation__c: [] },
+      unsetValues: { Installation__c: {} },
       relationships: { Installation__c: {} },
       recordTypes: {},
     });
@@ -143,23 +143,42 @@ describe('lookupTargets', () => {
   });
 });
 
-describe('nullWhenUnsetFields', () => {
-  it('lists createable, nillable fields with no default value', () => {
-    expect(
-      nullWhenUnsetFields([
-        field('Notes__c', 'string', { nillable: true }),
-        field('Name', 'string'),
-        field('Stage__c', 'picklist', { nillable: true, defaultedOnCreate: true }),
-        field('Type__c', 'picklist', {
-          nillable: true,
-          picklistValues: [{ value: 'A', active: true, defaultValue: true }],
-        }),
-        field('Kind__c', 'picklist', { nillable: true, picklistValues: [{ value: 'A', active: true }] }),
-        field('Total__c', 'double', { nillable: true, calculated: true }),
-        field('Number__c', 'string', { nillable: true, autoNumber: true }),
-        field('Locked__c', 'string', { nillable: true, createable: false }),
-      ]),
-    ).toEqual(['Notes__c', 'Kind__c']);
+describe('unsetFieldValues', () => {
+  const fields = [
+    field('Notes__c', 'string', { nillable: true }),
+    field('Name', 'string'),
+    field('Stage__c', 'picklist', { nillable: true, defaultedOnCreate: true }),
+    field('Type__c', 'picklist', {
+      nillable: true,
+      defaultedOnCreate: true,
+      picklistValues: [
+        { value: 'Old', active: false, defaultValue: true },
+        { value: "Tile's", active: true, defaultValue: true },
+      ],
+    }),
+    field('Kind__c', 'picklist', { nillable: true, picklistValues: [{ value: 'A', active: true }] }),
+    field('Done__c', 'boolean', { defaultedOnCreate: true, defaultValue: false }),
+    field('Sent__c', 'boolean', { defaultedOnCreate: true, defaultValue: 'true' }),
+    field('Odd__c', 'boolean', { defaultedOnCreate: true, defaultValue: 'maybe' }),
+    field('Total__c', 'double', { nillable: true, calculated: true }),
+    field('Number__c', 'string', { nillable: true, autoNumber: true }),
+    field('Locked__c', 'string', { nillable: true, createable: false }),
+  ];
+
+  it('gives empty fields, checkbox defaults, and picklist defaults when no record type can change them', () => {
+    expect(unsetFieldValues(fields, 1)).toEqual({
+      Notes__c: null,
+      Type__c: "'Tile\\'s'",
+      Kind__c: null,
+      Done__c: 'false',
+      Sent__c: 'true',
+    });
+  });
+
+  it('leaves picklist defaults out when the object has record types, or when that is unknown', () => {
+    for (const recordTypes of [3, undefined]) {
+      expect(unsetFieldValues(fields, recordTypes)).not.toHaveProperty('Type__c');
+    }
   });
 });
 
