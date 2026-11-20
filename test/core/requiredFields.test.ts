@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { generateApexTest } from '../../src/core/apexTemplate.js';
 import {
   apexValueForField,
+  changedFieldValues,
+  changedValueForField,
   type DescribeField,
   loadObjectFields,
   requiredFieldValues,
@@ -99,7 +101,48 @@ describe('loadObjectFields', () => {
     expect(map).toEqual({
       requiredFields: { Installation__c: { Crew_Size__c: '1' } },
       fieldValues: { Installation__c: { Crew_Size__c: '1' } },
+      changedValues: { Installation__c: { Crew_Size__c: '2' } },
     });
+  });
+});
+
+describe('changedValueForField', () => {
+  it('makes up a value that differs from apexValueForField for each type', () => {
+    const types = ['string', 'textarea', 'encryptedstring', 'email', 'phone', 'url', 'int', 'double', 'currency'];
+    for (const type of [...types, 'percent', 'date', 'datetime', 'time', 'boolean']) {
+      const changed = changedValueForField(field('A', type));
+      expect(changed).toBeDefined();
+      expect(changed).not.toBe(apexValueForField(field('A', type)));
+    }
+    expect(changedValueForField(field('A', 'string', { length: 1 }))).toBe("'C'");
+    expect(changedValueForField(field('A', 'reference'))).toBeUndefined();
+    expect(changedValueForField(field('A', 'base64'))).toBeUndefined();
+  });
+
+  it('picks a second active picklist value', () => {
+    const picklist = (values: Array<{ value: string; active: boolean; defaultValue?: boolean }>) =>
+      changedValueForField(field('A', 'picklist', { picklistValues: values }));
+    expect(
+      picklist([
+        { value: 'Old', active: false },
+        { value: 'New', active: true },
+        { value: 'Done', active: true, defaultValue: true },
+      ]),
+    ).toBe("'New'");
+    expect(picklist([{ value: 'Only', active: true }])).toBeUndefined();
+    expect(changedValueForField(field('A', 'multipicklist'))).toBeUndefined();
+  });
+
+  it('keeps fields a test could update', () => {
+    expect(
+      changedFieldValues([
+        field('Name', 'string'),
+        field('Formula__c', 'string', { calculated: true }),
+        field('Number__c', 'string', { autoNumber: true }),
+        field('Locked__c', 'string', { createable: false }),
+        field('Account__c', 'reference'),
+      ]),
+    ).toEqual({ Name: "'Changed'" });
   });
 });
 

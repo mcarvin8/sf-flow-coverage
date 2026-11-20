@@ -33,17 +33,24 @@ describe('parseFlowXml', () => {
     ]);
   });
 
-  it('reads booleans as false unless true, and skips incomplete filters', () => {
+  it('reads booleans as false unless true, datetimes as GMT, and skips incomplete filters', () => {
     const xml = `<Flow><processType>AutoLaunchedFlow</processType><start>
       <filters><field>A</field><operator>EqualTo</operator><value><booleanValue>false</booleanValue></value></filters>
       <filters><field>B</field><operator>EqualTo</operator><value><numberValue>abc</numberValue></value></filters>
       <filters><field>C</field><operator>EqualTo</operator><value><dateTimeValue>2026-01-01T00:00:00Z</dateTimeValue></value></filters>
+      <filters><field>D</field><operator>EqualTo</operator><value><dateTimeValue>yesterday</dateTimeValue></value></filters>
       <filters><operator>EqualTo</operator></filters>
     </start></Flow>`;
     expect(parseFlowXml('X', xml).filters).toEqual([
       { field: 'A', operator: 'EqualTo', apexValue: 'false', rawValue: 'false' },
       { field: 'B', operator: 'EqualTo' },
-      { field: 'C', operator: 'EqualTo', rawValue: '2026-01-01T00:00:00Z' },
+      {
+        field: 'C',
+        operator: 'EqualTo',
+        apexValue: "Datetime.valueOfGmt('2026-01-01 00:00:00')",
+        rawValue: '2026-01-01T00:00:00Z',
+      },
+      { field: 'D', operator: 'EqualTo', rawValue: 'yesterday' },
     ]);
   });
 

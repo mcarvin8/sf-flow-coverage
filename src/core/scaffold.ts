@@ -82,7 +82,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
         flows.flatMap((f) => objectsToCreate(f.flow)),
         options.describe,
       )
-    : { requiredFields: {}, fieldValues: {} };
+    : { requiredFields: {}, fieldValues: {}, changedValues: {} };
 
   for (const { flowName, flow } of flows) {
     const test = generateApexTest(flow, objectFields);

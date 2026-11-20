@@ -92,15 +92,69 @@ export function settableFieldValues(fields: DescribeField[]): Record<string, str
   return values;
 }
 
+/**
+ * An Apex literal that differs from `apexValueForField`'s value for the same field, so an update
+ * changes the field whether the insert left it empty or filled it. Undefined when there's no safe
+ * second value (lookups, single-value picklists, unknown types).
+ */
+export function changedValueForField(field: DescribeField): string | undefined {
+  switch (field.type) {
+    case 'string':
+    case 'textarea':
+    case 'encryptedstring':
+      return textValue(field, 'Changed');
+    case 'email':
+      return "'changed@example.com'";
+    case 'phone':
+      return "'5555550199'";
+    case 'url':
+      return "'https://example.org'";
+    case 'int':
+    case 'double':
+    case 'currency':
+    case 'percent':
+      return '2';
+    case 'date':
+      return 'Date.today().addDays(1)';
+    case 'datetime':
+      return 'Datetime.now().addDays(1)';
+    case 'time':
+      return 'Time.newInstance(13, 0, 0, 0)';
+    case 'boolean':
+      return 'true';
+    case 'picklist':
+    case 'multipicklist': {
+      const first = apexValueForField(field);
+      const other = (field.picklistValues ?? []).find((v) => v.active && `'${escapeApexString(v.value)}'` !== first);
+      return other ? `'${escapeApexString(other.value)}'` : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** A changed value for every field a test could update, used to meet `IsChanged` entry criteria. */
+export function changedFieldValues(fields: DescribeField[]): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const field of fields) {
+    if (!field.createable || field.calculated || field.autoNumber) continue;
+    const value = changedValueForField(field);
+    if (value !== undefined) values[field.name] = value;
+  }
+  return values;
+}
+
 export type ObjectFields = {
   requiredFields: RequiredFieldMap;
   fieldValues: RequiredFieldMap;
+  changedValues: RequiredFieldMap;
 };
 
 /** Describes each object once. Objects that can't be described are left out. */
 export async function loadObjectFields(objects: string[], describe: DescribeObject): Promise<ObjectFields> {
   const requiredFields: RequiredFieldMap = {};
   const fieldValues: RequiredFieldMap = {};
+  const changedValues: RequiredFieldMap = {};
   for (const object of [...new Set(objects)]) {
     let fields: DescribeField[] | undefined;
     try {
@@ -111,7 +165,8 @@ export async function loadObjectFields(objects: string[], describe: DescribeObje
     if (fields) {
       requiredFields[object] = requiredFieldValues(fields);
       fieldValues[object] = settableFieldValues(fields);
+      changedValues[object] = changedFieldValues(fields);
     }
   }
-  return { requiredFields, fieldValues };
+  return { requiredFields, fieldValues, changedValues };
 }

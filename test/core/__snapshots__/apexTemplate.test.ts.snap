@@ -45,9 +45,9 @@ private class Account_After_Save_FlowTest {
     static void runsFlowOnCreate() {
         Account testRecord = new Account(
             Name = 'Test Account',
-            Type = 'Customer - Direct'
+            Type = 'Customer - Direct',
+            AnnualRevenue = 1001
         );
-        // TODO: entry criteria: AnnualRevenue GreaterThan 1000.0
         // TODO: entry criteria: Rating IsChanged true
 
         Test.startTest();
@@ -68,7 +68,7 @@ private class Account_After_Save_FlowTest {
 
         Test.startTest();
         testRecord.Type = 'Customer - Direct';
-        // TODO: entry criteria: AnnualRevenue GreaterThan 1000.0
+        testRecord.AnnualRevenue = 1001;
         // TODO: entry criteria: Rating IsChanged true
         update testRecord;
         Test.stopTest();
