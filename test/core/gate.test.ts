@@ -89,6 +89,17 @@ describe('evaluateGate', () => {
     expect(result.flows[1].status).toBe('pass');
   });
 
+  it('fails Flows that could not be parsed without asking the org', async () => {
+    const result = await evaluateGate({
+      source: fakeSource([]),
+      candidates: [
+        { flowName: 'Broken', path: 'flows/Broken.flow-meta.xml', error: 'Broken is not a Flow metadata file.' },
+      ],
+    });
+    expect(result.passed).toBe(false);
+    expect(result.flows[0]).toMatchObject({ status: 'fail', reason: 'Broken is not a Flow metadata file.' });
+  });
+
   it('reports an unknown version number', async () => {
     const source = fakeSource([coverage('X', { covered: false, versionNumber: undefined })]);
     const result = await evaluateGate({ source, candidates: [{ flowName: 'X' }] });
@@ -106,6 +117,7 @@ describe('collectChangedFlows', () => {
     repo.commit('change', {
       'flows/New.flow-meta.xml': flowXml('AutoLaunchedFlow', 'Active', 'committed'),
       'flows/Screen.flow-meta.xml': flowXml('Flow'),
+      'flows/Broken.flow-meta.xml': '<CustomObject/>',
     });
     // Uncommitted edits must not affect the result: the gate reads the `to` revision.
     repo.write('flows/New.flow-meta.xml', flowXml('AutoLaunchedFlow', 'Active', 'working-tree'));
@@ -116,8 +128,10 @@ describe('collectChangedFlows', () => {
   it('parses each changed Flow at the target revision', async () => {
     const candidates = await collectChangedFlows(repo.dir, 'main', 'feature');
     expect(candidates.map((c) => [c.flowName, c.path, c.metadata?.processType, c.metadata?.label])).toEqual([
+      ['Broken', 'flows/Broken.flow-meta.xml', undefined, undefined],
       ['New', 'flows/New.flow-meta.xml', 'AutoLaunchedFlow', 'committed'],
       ['Screen', 'flows/Screen.flow-meta.xml', 'Flow', 'x'],
     ]);
+    expect(candidates[0].error).toMatch(/not a Flow metadata file/);
   });
 });

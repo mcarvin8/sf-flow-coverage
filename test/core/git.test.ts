@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { getChangedFlowFiles, getFlowChurn, isGitRepo, showFileAtRevision } from '../../src/core/git.js';
+import { getChangedFlowFiles, getFlowChurn, isGitRepo, parseSince, showFileAtRevision } from '../../src/core/git.js';
 import { flowXml, TempGitRepo } from '../gitRepo.js';
 
 const FLOWS = 'force-app/main/default/flows';
@@ -34,6 +34,7 @@ describe('git helpers', () => {
 
   it('detects git repositories', async () => {
     expect(await isGitRepo(repo.dir)).toBe(true);
+    expect(await isGitRepo(relative(process.cwd(), repo.dir) || '.')).toBe(true);
     expect(await isGitRepo(notRepo)).toBe(false);
   });
 
@@ -65,7 +66,41 @@ describe('git helpers', () => {
     expect(changed.sort()).toEqual([`${FLOWS}/Gamma.flow-meta.xml`, 'mdapi/flows/Beta.flow']);
   });
 
+  it('refuses revisions that do not resolve', async () => {
+    await expect(getChangedFlowFiles(repo.dir, 'nope', 'feature')).rejects.toThrow();
+  });
+
+  it('refuses revisions with no common history', async () => {
+    repo.git('checkout', '-q', '--orphan', 'island');
+    repo.commit('island', { 'island.txt': 'x' });
+    try {
+      await expect(getChangedFlowFiles(repo.dir, 'main', 'island')).rejects.toThrow(/no common history/);
+    } finally {
+      repo.git('checkout', '-q', 'feature');
+    }
+  });
+
   it('reads a file at a revision', async () => {
     expect(await showFileAtRevision(repo.dir, 'main', `${FLOWS}\\Alpha.flow-meta.xml`)).toContain('<label>y</label>');
+  });
+});
+
+describe('parseSince', () => {
+  const now = new Date('2026-06-15T12:00:00Z');
+
+  it('parses relative values', () => {
+    expect(parseSince('3 days ago', now).toISOString()).toBe('2026-06-12T12:00:00.000Z');
+    expect(parseSince('1 week ago', now).toISOString()).toBe('2026-06-08T12:00:00.000Z');
+    expect(parseSince('6 months ago', now).toISOString()).toBe('2025-12-15T12:00:00.000Z');
+    expect(parseSince(' 2 Years Ago ', now).toISOString()).toBe('2024-06-15T12:00:00.000Z');
+  });
+
+  it('parses ISO dates', () => {
+    expect(parseSince('2026-01-31T00:00:00Z').toISOString()).toBe('2026-01-31T00:00:00.000Z');
+  });
+
+  it('refuses anything else', () => {
+    expect(() => parseSince('last tuesday')).toThrow(/Unsupported --since value "last tuesday"/);
+    expect(() => parseSince('2026-13-45')).toThrow(/Unsupported --since value/);
   });
 });

@@ -167,7 +167,8 @@ FLAGS
                              configuration variable is already set.
       --api-version=<value>  Override the api version used for api requests made by this command
       --fail-if-not-ready    Exit with code 1 when the org is below the threshold.
-      --since=<value>        Only count commits after this date (any value `git log --since` accepts).
+      --since=<value>        Only count commits after this date: a date (2026-01-31) or "<n> days|weeks|months|years
+                             ago".
       --threshold=<value>    [default: 75] Coverage percentage the org must reach.
 
 GLOBAL FLAGS

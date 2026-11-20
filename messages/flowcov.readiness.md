@@ -28,7 +28,7 @@ Git repository used to rank uncovered Flows by how often they change.
 
 # flags.since.summary
 
-Only count commits after this date (any value `git log --since` accepts).
+Only count commits after this date: a date (2026-01-31) or "<n> days|weeks|months|years ago".
 
 # flags.threshold.summary
 
