@@ -6,6 +6,8 @@ export type DescribeField = {
   type: string;
   nillable: boolean;
   createable: boolean;
+  /** False for fields that can be set on insert but not changed later, such as most master-detail fields. */
+  updateable?: boolean;
   defaultedOnCreate: boolean;
   calculated?: boolean;
   autoNumber?: boolean;
@@ -161,6 +163,10 @@ export type ObjectFields = {
   relationships: Record<string, Record<string, string>>;
   /** How many record types each object has, including Master, when the describe says. */
   recordTypes: Record<string, number>;
+  /** Fields a test can't set at all (formula, auto-number, system fields), per object. */
+  readOnlyFields: Record<string, string[]>;
+  /** Fields a test can set on insert but not change in an update, per object. */
+  createOnlyFields: Record<string, string[]>;
   /** What a new record holds in each field a test doesn't set, per object (see `unsetFieldValues`). */
   unsetValues: Record<string, Record<string, string | null>>;
 };
@@ -172,6 +178,8 @@ export const emptyObjectFields = (): ObjectFields => ({
   lookups: {},
   relationships: {},
   recordTypes: {},
+  readOnlyFields: {},
+  createOnlyFields: {},
   unsetValues: {},
 });
 
@@ -281,6 +289,12 @@ export async function loadObjectFields(
       into.lookups[object] = lookupTargets(fields);
       into.relationships[object] = relationshipLookups(fields);
       into.unsetValues[object] = unsetFieldValues(fields, into.recordTypes[object]);
+      into.readOnlyFields[object] = fields
+        .filter((f) => !f.createable || f.calculated || f.autoNumber)
+        .map((f) => f.name);
+      into.createOnlyFields[object] = fields
+        .filter((f) => f.createable && !f.calculated && !f.autoNumber && f.updateable === false)
+        .map((f) => f.name);
     }
   }
   return into;

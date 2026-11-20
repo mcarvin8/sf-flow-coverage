@@ -110,7 +110,21 @@ describe('loadObjectFields', () => {
       unsetValues: { Installation__c: {} },
       relationships: { Installation__c: {} },
       recordTypes: {},
+      readOnlyFields: { Installation__c: [] },
+      createOnlyFields: { Installation__c: [] },
     });
+  });
+
+  it('records fields a test cannot set, and fields it can only set on insert', async () => {
+    const map = await loadObjectFields(['Job__c'], async () => [
+      field('Name', 'string'),
+      field('Region_Name__c', 'string', { createable: false, calculated: true }),
+      field('Number__c', 'string', { autoNumber: true }),
+      field('Project__c', 'reference', { referenceTo: ['Project__c'], updateable: false }),
+      field('Notes__c', 'string', { updateable: true }),
+    ]);
+    expect(map.readOnlyFields).toEqual({ Job__c: ['Region_Name__c', 'Number__c'] });
+    expect(map.createOnlyFields).toEqual({ Job__c: ['Project__c'] });
   });
 
   it('adds to earlier results without describing an object twice', async () => {

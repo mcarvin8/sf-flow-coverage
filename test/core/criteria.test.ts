@@ -214,6 +214,51 @@ describe('solveCriteria', () => {
   });
 });
 
+describe('solveCriteria with fields a test cannot write', () => {
+  const writable = (object: string, field: string, when: 'insert' | 'update'): boolean => {
+    if (field.endsWith('_Formula__c')) return false;
+    return !(when === 'update' && field === 'Project__c');
+  };
+  const strict = (overrides: Partial<SolveContext> = {}): SolveContext => ctx({ writable, ...overrides });
+
+  it('leaves criteria on formula fields as TODOs', () => {
+    const plan = plain(solveCriteria(conditionFromFormula('{!$Record.Region_Formula__c} = "West"'), strict()));
+    expect(plan).toEqual({ set: {}, unmet: ['entry criteria formula term: {!$Record.Region_Formula__c} = "West"'] });
+    const compared = solveCriteria(conditionFromFormula('{!$Record.Crew__c} > {!$Record.Cap_Formula__c}'), strict());
+    expect(plain(compared).unmet).toHaveLength(1);
+    const prior = solveCriteria(
+      conditionFromFormula('{!$Record__Prior.Region_Formula__c} = "West"'),
+      strict({ context: 'update' }),
+    );
+    expect(plain(prior).unmet).toHaveLength(1);
+  });
+
+  it('sets a field that can only be set on insert in the insert of an update test', () => {
+    const update = strict({ context: 'update', fieldValues: { Project__c: 'projectParent.Id' } });
+    expect(plain(solveCriteria(conditionFromFormula('NOT(ISBLANK({!$Record.Project__c}))'), update))).toEqual({
+      set: {},
+      prior: { Project__c: 'projectParent.Id' },
+    });
+    expect(plain(solveCriteria(conditionFromFormula('ISCHANGED({!$Record.Project__c})'), update)).unmet).toHaveLength(
+      1,
+    );
+    // On insert, it's set as usual.
+    expect(
+      plain(
+        solveCriteria(
+          conditionFromFormula('NOT(ISBLANK({!$Record.Project__c}))'),
+          strict({ fieldValues: { Project__c: 'projectParent.Id' } }),
+        ),
+      ),
+    ).toEqual({ set: { Project__c: 'projectParent.Id' } });
+  });
+
+  it('leaves criteria on formula fields of a parent record as TODOs', () => {
+    const plan = solveCriteria(conditionFromFormula('{!$Record.Account__r.Tier_Formula__c} = "Gold"'), strict());
+    expect(plain(plan).unmet).toHaveLength(1);
+  });
+});
+
 describe('boundValue', () => {
   it('steps numbers, dates, and datetimes', () => {
     expect(boundValue('1000.0', 1)).toBe('1001');

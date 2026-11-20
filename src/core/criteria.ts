@@ -28,7 +28,16 @@ export type SolveContext = {
   lookups: Record<string, string>;
   /** Values for a parent object's fields, for criteria on related records. */
   parentFieldValues(object: string): Record<string, string>;
+  /**
+   * Whether a test can set a field of `object` on insert, or change it in an update. Formula
+   * fields can't be set at all; master-detail fields usually can't change after the insert.
+   * Without it, every field counts as writable.
+   */
+  writable?(object: string, field: string, when: 'insert' | 'update'): boolean;
 };
+
+const canWrite = (ctx: SolveContext, object: string, field: string, when: 'insert' | 'update'): boolean =>
+  ctx.writable?.(object, field, when) ?? true;
 
 /** Field values that meet a condition, and what they couldn't meet. */
 export type CriteriaPlan = {
@@ -146,7 +155,7 @@ function rightValue(right: Operand | undefined, plan: CriteriaPlan, ctx: SolveCo
   if (planned !== undefined && !isNullish(planned)) return planned;
   const value = ctx.fieldValues[field];
   if (value === undefined || plan.keep.has(field)) return undefined;
-  plan.set.set(field, value);
+  if (!recordSide(field, plan, ctx).assign(value)) return undefined;
   return value;
 }
 
@@ -160,6 +169,11 @@ function recordSide(field: string, plan: CriteriaPlan, ctx: SolveContext): Side 
       const existing = plan.set.get(field);
       if (existing !== undefined) return existing === value;
       if (plan.keep.has(field)) return false;
+      if (!canWrite(ctx, ctx.object, field, 'insert')) return false;
+      if (ctx.context === 'update' && !canWrite(ctx, ctx.object, field, 'update')) {
+        // The insert sets it, and it keeps that value through the update.
+        return priorSide(field, plan, ctx).assign(value);
+      }
       plan.set.set(field, value);
       return true;
     },
@@ -182,6 +196,7 @@ function priorSide(field: string, plan: CriteriaPlan, ctx: SolveContext): Side {
     assign: (value) => {
       const existing = plan.prior.get(field) ?? ctx.inserted[field];
       if (existing !== undefined && !isNullish(existing)) return existing === value;
+      if (!canWrite(ctx, ctx.object, field, 'insert')) return false;
       plan.prior.set(field, value);
       return true;
     },
@@ -203,6 +218,7 @@ function parentSide(object: string, field: string, plan: CriteriaPlan, ctx: Solv
     assign: (value) => {
       const existing = fields().get(field);
       if (existing !== undefined) return existing === value;
+      if (!canWrite(ctx, object, field, 'insert')) return false;
       fields().set(field, value);
       return true;
     },
@@ -248,6 +264,7 @@ function meetAtom(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean {
       plan.keep.add(field);
       return true;
     }
+    if (!canWrite(ctx, ctx.object, field, 'update')) return false;
     const before = plan.prior.get(field) ?? ctx.inserted[field];
     const planned = plan.set.get(field);
     if (planned !== undefined) return planned !== before;
