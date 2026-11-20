@@ -68,6 +68,12 @@ describe('buildReadinessReport', () => {
 
   it('treats an org with no active Flows as ready', async () => {
     const result = await buildReadinessReport({ source: fakeSource([]) });
-    expect(result).toMatchObject({ totalFlows: 0, coveragePercent: 100, ready: true, flowsNeeded: 0 });
+    expect(result).toMatchObject({
+      totalFlows: 0,
+      coveragePercent: 100,
+      ready: true,
+      flowsNeeded: 0,
+      processBuilderProcesses: 0,
+    });
   });
 });

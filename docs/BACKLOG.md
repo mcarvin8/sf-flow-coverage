@@ -1,8 +1,8 @@
 # Backlog
 
-Ideas for sf-flow-coverage, ordered by value within each section. Open an issue before starting anything large.
+Ideas for sf-flow-coverage, ordered by value within each section. Open an issue before starting anything large. Item numbers stay fixed because pull requests refer to them, so removed items leave gaps.
 
-Suggested first picks: [Warn when coverage is missing entirely](#1-warn-when-coverage-is-missing-entirely), [Real assertions](#7-real-assertions), and [`sf flowcov transform`](#8-sf-flowcov-transform).
+Suggested first picks: [Warn when coverage is missing entirely](#1-warn-when-coverage-is-missing-entirely), [Markdown output](#9-markdown-output), and [Show the deploy-as-active setting in readiness](#3-show-the-deploy-as-active-setting-in-readiness).
 
 ## Gaps found in live testing
 
@@ -61,10 +61,6 @@ Done: writes SonarQube generic, Cobertura, and lcov reports, one line per elemen
 
 Add `--output-format markdown` (or write to `$GITHUB_STEP_SUMMARY`) for `readiness` and `gate`, so CI can post results as a pull request comment or job summary.
 
-### 10. Native GitHub Action
-
-Run the gate as a GitHub Action, following sf-package-combiner's setup (bundled `dist/action`, floating major tag).
-
 ### 11. Gate exclusions
 
 Support a `.flowcovignore` file or `--exclude` flag for legacy Flows a team has deliberately deferred.
@@ -77,12 +73,15 @@ Done: `readiness` and `gate` list the elements no test ran, compared with the or
 
 ### 13. Process Builder notice
 
-Mark Process Builder processes (`Workflow` process type) in `readiness` and suggest migrating them, since Salesforce has retired Process Builder.
-
-### 14. Core package
-
-Publish the programmatic API as a dependency-free package, like `sf-package-combiner-core`, if there's demand for using it outside the CLI.
+Done: `readiness` labels Process Builder processes (`Workflow`, `CustomEvent`, and `InvocableProcess` process types), counts them, and suggests migrating them with Migrate to Flow; `gate` warns on a changed process, and `scaffold`'s placeholder test says the same.
 
 ### 15. Flow Test Mode
 
 When Flow Test Mode leaves beta, check whether its coverage can be queried or counts toward the deploy-as-active requirement. If so, add a second `CoverageSource` implementation. Don't generate Flow test metadata until then: it requires the beta in every target org.
+
+## Not planned
+
+Kept so the reasoning isn't lost if they come up again.
+
+- **10. Native GitHub Action.** `@salesforce/core` logs with pino, which breaks inside a bundled, frozen GitHub Action. The plugin already runs in any CI that has the Salesforce CLI.
+- **14. Core package.** Every useful result needs an authenticated org connection, which the CLI provides. Scripts that already have a connection can use the plugin's exported functions (`src/index.ts`); `OrgCoverageSource` only needs a Tooling API query function.

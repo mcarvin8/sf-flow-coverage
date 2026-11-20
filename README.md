@@ -71,7 +71,7 @@ sf flowcov transform --target-org ci-sandbox --format sonar
 
 ## Readiness report
 
-`sf flowcov readiness` reports the org-wide percentage against the threshold and how many more Flows need a test to reach it. Uncovered Flows are ranked by how often their source file changed in git (run it from your Salesforce DX repo, or pass `--project-dir`), so the Flows most likely to be deployed next are at the top. Covered Flows list the Apex test methods that run them, their element coverage, and the elements no test runs yet.
+`sf flowcov readiness` reports the org-wide percentage against the threshold and how many more Flows need a test to reach it. Uncovered Flows are ranked by how often their source file changed in git (run it from your Salesforce DX repo, or pass `--project-dir`), so the Flows most likely to be deployed next are at the top. Covered Flows list the Apex test methods that run them, their element coverage, and the elements no test runs yet. Process Builder processes are labeled, with a suggestion to migrate them to Flows (Salesforce no longer supports Process Builder) rather than write tests for them.
 
 Pass `--fail-if-not-ready` to exit with code 1 below the threshold.
 
@@ -237,7 +237,8 @@ DESCRIPTION
   turn on "Deploy processes and flows as active". This command reads FlowTestCoverage from the target org, reports the
   org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and,
   for each covered Flow, the Apex tests that run it and the elements no test runs yet. Listing those elements takes one
-  Tooling API query per partly covered Flow.
+  Tooling API query per partly covered Flow. Process Builder processes are labeled and counted, with a suggestion to
+  migrate them to Flows, since Salesforce no longer supports Process Builder.
 
   FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first with coverage turned on (for
   example, `sf apex run test --test-level RunLocalTests --code-coverage --wait 60`) so the report is current. Without

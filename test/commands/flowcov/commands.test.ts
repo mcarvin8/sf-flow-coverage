@@ -80,6 +80,24 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
       expect(process.exitCode).toBe(1);
     });
 
+    it('labels Process Builder processes and suggests migrating them', async () => {
+      orgFlows.value = [
+        coverage('Old_Process', { processType: 'Workflow' }),
+        coverage('Event_Process', { processType: 'CustomEvent', covered: false }),
+        coverage('Modern_Flow'),
+      ];
+      const result = await FlowcovReadiness.run(['--target-org', testOrg.username]);
+      expect(result.processBuilderProcesses).toBe(2);
+      expect(tableRows().map((row) => [row.Flow, row.Type])).toEqual([
+        ['Event_Process', 'Process Builder (platform event)'],
+        ['Modern_Flow', 'AutoLaunchedFlow'],
+        ['Old_Process', 'Process Builder (record change)'],
+      ]);
+      expect(logged()).toContain(
+        '2 of the active Flows are Process Builder processes (Type "Process Builder"). Salesforce no longer supports Process Builder.',
+      );
+    });
+
     it('lists the elements no test ran for partly covered Flows', async () => {
       const partial = coverage('Partial', { elementsCovered: 1, elementsTotal: 2, coveredElementNames: ['check'] });
       orgFlows.value = [partial, coverage('Full', { elementsCovered: 5, elementsTotal: 5 })];

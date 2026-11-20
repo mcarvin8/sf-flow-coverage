@@ -134,6 +134,8 @@ export type ReadinessResult = {
   ready: boolean;
   /** Additional Flows that need a test to reach the threshold. */
   flowsNeeded: number;
+  /** Active Process Builder processes among the counted Flows. Salesforce no longer supports Process Builder. */
+  processBuilderProcesses: number;
   /** Uncovered first (most-changed first), then covered. */
   flows: ReadinessFlow[];
 };

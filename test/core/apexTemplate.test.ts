@@ -132,9 +132,17 @@ describe('generateApexTest', () => {
   it('writes a placeholder for Process Builder processes', async () => {
     const test = generateApexTest(await fixture('Contact_Process'));
     expect(test.kind).toBe('process');
-    expect(test.body).toContain('// TODO: Workflow processes start when a record changes');
-    expect(generateApexTest({ ...base, processType: undefined }).body).toContain('Process type unknown.');
-    expect(generateApexTest({ ...base, processType: undefined }).body).toContain('// TODO: This processes');
+    expect(test.body).toContain(
+      [
+        '    static void runsProcess() {',
+        '        // Salesforce no longer supports Process Builder.',
+        '        // Migrate processes to Flows with the Migrate to Flow tool in Setup rather than writing tests for them; each migrated Flow still needs an Apex test.',
+        '        // TODO: Process Builder (record change) processes start when a record changes or an event fires.',
+      ].join('\n'),
+    );
+    const unknown = generateApexTest({ ...base, processType: undefined }).body;
+    expect(unknown).toContain('Process type unknown.');
+    expect(unknown).toContain('    static void runsProcess() {\n        // TODO: These processes');
   });
 
   it('omits the label when there is none and escapes the Flow name', () => {

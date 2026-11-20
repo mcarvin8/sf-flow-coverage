@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { flowNameFromPath, isCountedProcessType, qualifiedFlowName, splitFlowName } from '../../src/core/flowTypes.js';
+import {
+  flowNameFromPath,
+  isCountedProcessType,
+  isProcessBuilder,
+  processTypeLabel,
+  qualifiedFlowName,
+  splitFlowName,
+} from '../../src/core/flowTypes.js';
 
 describe('flowTypes', () => {
   it('counts autolaunched Flows and processes, case-insensitively', () => {
@@ -15,6 +22,15 @@ describe('flowTypes', () => {
     expect(isCountedProcessType('Flow')).toBe(false);
     expect(isCountedProcessType(undefined)).toBe(false);
     expect(isCountedProcessType('')).toBe(false);
+  });
+
+  it('recognizes and labels Process Builder processes', () => {
+    expect(['Workflow', 'customevent', 'InvocableProcess'].map(isProcessBuilder)).toEqual([true, true, true]);
+    expect(['AutoLaunchedFlow', 'Flow', '', undefined].map(isProcessBuilder)).toEqual([false, false, false, false]);
+    expect(processTypeLabel('Workflow')).toBe('Process Builder (record change)');
+    expect(processTypeLabel('CustomEvent')).toBe('Process Builder (platform event)');
+    expect(processTypeLabel('InvocableProcess')).toBe('Process Builder (invocable)');
+    expect(processTypeLabel('AutoLaunchedFlow')).toBe('AutoLaunchedFlow');
   });
 
   it('qualifies and splits namespaced names', () => {

@@ -1,5 +1,5 @@
 import { findUncoveredElements } from './elementCoverage.js';
-import { DEFAULT_THRESHOLD } from './flowTypes.js';
+import { DEFAULT_THRESHOLD, isProcessBuilder } from './flowTypes.js';
 import type { CoverageSource, ReadinessFlow, ReadinessResult } from './types.js';
 
 export type ReadinessOptions = {
@@ -54,6 +54,7 @@ export async function buildReadinessReport(options: ReadinessOptions): Promise<R
     coveragePercent,
     ready: flowsNeeded === 0,
     flowsNeeded,
+    processBuilderProcesses: flows.filter((f) => isProcessBuilder(f.processType)).length,
     flows,
   };
 }
