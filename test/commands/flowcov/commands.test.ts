@@ -25,7 +25,9 @@ vi.mock('../../../src/core/orgCoverageSource.js', () => ({
   },
 }));
 
-describe('flowcov commands', () => {
+// Command runs load oclif config and @salesforce/core on first use, which can take
+// longer than Vitest's default 5s on slow CI runners (Windows especially).
+describe('flowcov commands', { timeout: 30_000 }, () => {
   const $$ = new TestContext({ setup: false });
   const testOrg = new MockTestOrgData();
   let ux: ReturnType<typeof stubSfCommandUx>;
