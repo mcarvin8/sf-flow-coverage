@@ -22,34 +22,31 @@ Done: `readiness` reads `FlowSettings.enableFlowDeployAsActiveEnabled` and `Orga
 
 ### 4. More entry-criteria formulas
 
-`AND(...)` of simple terms on `$Record` fields (`ISPICKVAL`, `ISBLANK`, `ISCHANGED`, comparisons with a literal, checkboxes) is handled. Still left as TODOs:
+Entry criteria go through one condition engine: `AND`/`OR`/`NOT`/`IF`, comparisons with literals, other fields, `$User.Id`, and date functions, `$Record__Prior`, and fields one relationship away. Still left as TODOs:
 
-- `OR(...)` and `IF(...)`: meet one branch.
-- Cross-object fields (`{!$Record.Account.Type}`) and `$Record__Prior`.
-- Function calls such as `TODAY()` or `DATE(2026, 1, 31)` in comparisons.
+- Functions on fields, such as `LEN({!$Record.Name}) > 3` or `TEXT(...)`, and `CASE`.
+- Fields more than one relationship away (`{!$Record.Account__r.Owner.Name}`).
 
 ### 5. More filter operators
 
-Comparisons, `Contains`/`StartsWith`/`EndsWith`, and `IsChanged` are handled. Still left as TODOs:
+Every filter operator is handled, compared with a literal, another field, or `$User.Id`. Still left as TODOs:
 
-- `NotEqualTo`: use a described value that differs from the literal.
-- Filters compared with another field or a resource (`$Record.Max__c`, `$User.Id`) instead of a literal.
+- Filters compared with other resources, such as `$Setup` custom settings or `$Label`.
 
 ### 6. Deeper parent records
 
-Required and `IsNull false` lookups get a parent record (or the running user, or the standard price book). Still left as TODOs:
+Required and `IsNull false` lookups get parent records up to three levels deep, polymorphic lookups use the running user or the first object a test can insert, and `RecordType` and `BusinessHours` lookups read what the org has. Still left as TODOs:
 
-- A parent's own required lookups (parents are one level deep).
-- Polymorphic lookups (`WhatId`) and setup objects (`RecordType`, `Profile`, `Group`).
+- `Profile`, `Group` (queues), and `UserRole` lookups, which need localized names or setup DML.
+- Lookups back into their own chain (self-lookups) and parents past three levels.
 
 ### 7. Real assertions
 
-Record-triggered tests now follow the Flow's elements: they assert the `$Record` fields the Flow is certain to set, expect a custom error the Flow is certain to raise, and comment out assertions for decision outcomes they can't predict. Next steps:
+Tests follow the Flow's elements and assert what it is certain to do: `$Record` fields, records it creates, output variables, and custom errors (with a second test that avoids the error). Decisions on formula resources, checkbox and picklist defaults, prior values, and empty lookups are decided. Next steps:
 
-- When a test expects a custom error, add a second test that sets the fields the decision checks so the save succeeds.
-- Decide more decisions: picklist defaults (only safe when the object has no record types that change them), checkbox defaults, and formula resources.
-- Assert records the Flow creates (for example a Task) and updates to related records.
-- Assert output variables of autolaunched Flows started with `Flow.Interview`.
+- Steer a test down a branch it would otherwise skip, so the Flow's other elements get covered (for example the branch that creates a Task when a crew is too small). Needs the solver to work backwards through formula resources.
+- Assert updates to related records.
+- Follow loops.
 
 ## CI and reporting
 

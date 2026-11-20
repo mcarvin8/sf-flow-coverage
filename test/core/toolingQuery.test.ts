@@ -27,9 +27,12 @@ describe('dataQuery and metadataRead', () => {
 
 describe('describeObject', () => {
   it('returns the describe fields', async () => {
-    const describe = vi.fn().mockResolvedValue({ fields: [{ name: 'Name' }] });
+    const describe = vi.fn().mockResolvedValue({ fields: [{ name: 'Name' }], recordTypeInfos: [{}, {}] });
     const connection = { describe } as unknown as Parameters<typeof describeObject>[0];
-    expect(await describeObject(connection)('Account')).toEqual([{ name: 'Name' }]);
+    expect(await describeObject(connection)('Account')).toEqual({
+      fields: [{ name: 'Name' }],
+      recordTypeInfos: [{}, {}],
+    });
     expect(describe).toHaveBeenCalledWith('Account');
   });
 });

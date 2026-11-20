@@ -66,7 +66,7 @@ describe('scaffoldTests', () => {
         join(project, 'flows', 'Job_Flow.flow-meta.xml'),
         `<Flow><processType>AutoLaunchedFlow</processType><status>Active</status><start>
           <filters><field>Contact__c</field><operator>IsNull</operator><value><booleanValue>false</booleanValue></value></filters>
-          <filterFormula>NOT(ISBLANK({!$Record.Site__c}))</filterFormula>
+          <filterFormula>AND(NOT(ISBLANK({!$Record.Site__c})), {!$Record.Region__r.Name} = &quot;West&quot;)</filterFormula>
           <object>Job__c</object><recordTriggerType>Create</recordTriggerType><triggerType>RecordAfterSave</triggerType>
         </start></Flow>`,
       );
@@ -78,6 +78,7 @@ describe('scaffoldTests', () => {
         createable: true,
         defaultedOnCreate: false,
         referenceTo: [target],
+        relationshipName: name.replace(/__c$/, '__r'),
       });
       await scaffoldTests({
         flowNames: ['Job_Flow'],
@@ -85,23 +86,30 @@ describe('scaffoldTests', () => {
         outputDir: out,
         describe: async (name) => {
           described.push(name);
-          if (name !== 'Job__c')
-            return [{ name: 'Name', type: 'string', nillable: false, createable: true, defaultedOnCreate: false }];
+          const name_ = { name: 'Name', type: 'string', nillable: false, createable: true, defaultedOnCreate: false };
+          // Account requires a lookup to Territory__c, which the test inserts first.
+          if (name === 'Account')
+            return { fields: [name_, reference('Territory__c', 'Territory__c', false)], recordTypeInfos: [{}] };
+          if (name !== 'Job__c') return [name_];
           return [
             reference('Account__c', 'Account', false),
             reference('Contact__c', 'Contact'),
             reference('Site__c', 'Site__c'),
             reference('Approver__c', 'User', false),
             reference('Other__c', 'Other__c'),
+            reference('Region__c', 'Region__c'),
           ];
         },
       });
-      expect(described).toEqual(['Job__c', 'Account', 'Contact', 'Site__c']);
+      expect(described).toEqual(['Job__c', 'Account', 'Contact', 'Site__c', 'Region__c', 'Territory__c']);
       const test = readFileSync(join(out, 'Job_Flow_FlowTest.cls'), 'utf8');
       expect(test).toContain('Account__c = accountParent.Id');
+      expect(test).toContain('Territory__c = territoryParent.Id');
       expect(test).toContain('Approver__c = UserInfo.getUserId()');
       expect(test).toContain('Contact__c = contactParent.Id');
       expect(test).toContain('Site__c = siteParent.Id');
+      expect(test).toContain("Region__c regionParent = new Region__c(\n            Name = 'West'\n        );");
+      expect(test).toContain('Region__c = regionParent.Id');
       expect(test).not.toContain('TODO: entry criteria');
     } finally {
       rmSync(project, { recursive: true, force: true });

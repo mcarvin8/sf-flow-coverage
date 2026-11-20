@@ -2,7 +2,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
-import { parseFilterFormula } from './filterFormula.js';
+import { entryCondition, fieldPaths } from './conditions.js';
 import { isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
 import { findFlowFiles, readProjectConfig } from './projectFiles.js';
@@ -11,6 +11,7 @@ import {
   type DescribeObject,
   emptyObjectFields,
   loadObjectFields,
+  MAX_PARENT_DEPTH,
   type ObjectFields,
 } from './requiredFields.js';
 import type { FlowMetadata, ScaffoldResult } from './types.js';
@@ -41,29 +42,44 @@ function objectsToCreate(flow: FlowMetadata): string[] {
   return objects;
 }
 
-/** Entry-criteria fields on the triggering record, from filters and a simple formula. */
-function criteriaFields(flow: FlowMetadata): Set<string> {
-  const formulaFilters = flow.filterFormula ? (parseFilterFormula(flow.filterFormula) ?? []) : [];
-  return new Set([...flow.filters, ...formulaFilters].map((f) => f.field));
+/**
+ * Lookup fields the entry criteria read on the triggering record: lookups compared directly
+ * (`Account__c`) and the lookups behind related fields (`Account__r.Type`).
+ */
+function criteriaLookups(flow: FlowMetadata, relationships: Record<string, string>): Set<string> {
+  const lookups = new Set<string>();
+  for (const path of fieldPaths(entryCondition(flow))) {
+    if (path.length === 1) lookups.add(path[0]);
+    else if (relationships[path[0]]) lookups.add(relationships[path[0]]);
+  }
+  return lookups;
 }
 
 /**
  * Objects a generated test inserts as parents: targets of lookups that are required, or that
- * the entry criteria reference, on the records the test creates. One level deep: a parent's
- * own required lookups stay TODOs.
+ * the entry criteria reference, on the records the test creates.
  */
 function parentObjects(flows: FlowMetadata[], fields: ObjectFields): string[] {
   const parents: string[] = [];
   for (const flow of flows) {
-    const criteria = criteriaFields(flow);
     for (const object of objectsToCreate(flow)) {
+      const criteria = object === flow.object ? criteriaLookups(flow, fields.relationships[object] ?? {}) : new Set();
       for (const [field, target] of Object.entries(fields.lookups[object] ?? {})) {
-        const used = field in (fields.requiredFields[object] ?? {}) || (object === flow.object && criteria.has(field));
+        const used = field in (fields.requiredFields[object] ?? {}) || criteria.has(field);
         if (used && canInsertParent(target)) parents.push(target);
       }
     }
   }
   return parents;
+}
+
+/** Targets of the required lookups on the given (already described) parent objects. */
+function grandparentObjects(objects: string[], fields: ObjectFields): string[] {
+  return objects.flatMap((object) =>
+    Object.entries(fields.lookups[object] ?? {})
+      .filter(([field, target]) => field in (fields.requiredFields[object] ?? {}) && canInsertParent(target))
+      .map(([, target]) => target),
+  );
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -116,14 +132,15 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       options.describe,
       objectFields,
     );
-    await loadObjectFields(
-      parentObjects(
-        flows.map((f) => f.flow),
-        objectFields,
-      ),
-      options.describe,
+    let level = parentObjects(
+      flows.map((f) => f.flow),
       objectFields,
     );
+    for (let depth = 1; depth <= MAX_PARENT_DEPTH && level.length > 0; depth++) {
+      const fresh = [...new Set(level)].filter((object) => !(object in objectFields.requiredFields));
+      await loadObjectFields(fresh, options.describe, objectFields);
+      level = grandparentObjects(fresh, objectFields);
+    }
   }
 
   for (const { flowName, flow } of flows) {

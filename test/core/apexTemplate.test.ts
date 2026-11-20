@@ -47,11 +47,11 @@ describe('generateApexTest', () => {
     expect(test.body).toMatchSnapshot();
   });
 
-  it('updates a record for an Update Flow and leaves cross-object criteria as TODOs', async () => {
+  it('updates a record for an Update Flow, meeting custom filter logic through one branch', async () => {
     const test = generateApexTest(await fixture('Case_Update'));
+    // 1 OR (2 AND 3): the first filter alone meets it, so the cross-object filter isn't needed.
     expect(test.body).toContain('testRecord.IsEscalated = true;');
-    expect(test.body).toContain('// TODO: entry criteria: Account.Name EqualTo Acme');
-    expect(test.body).toContain('// TODO: entry criteria logic: 1 OR (2 AND 3)');
+    expect(test.body).not.toContain('TODO: entry criteria');
     expect(test.body).not.toContain('runsFlowOnCreate');
     expect(test.body).toMatchSnapshot();
   });
@@ -79,7 +79,7 @@ describe('generateApexTest', () => {
     const test = generateApexTest(await fixture('Opportunity_Create'));
     expect(test.body).toContain("CloseDate = Date.valueOf('2026-12-31')");
     expect(test.body).toContain('Probability = 50');
-    expect(test.body).toContain('// TODO: entry criteria: OwnerId EqualTo $User.Id');
+    expect(test.body).toContain('OwnerId = UserInfo.getUserId()');
     expect(test.body).toContain('// TODO: entry criteria: Description IsNull');
     expect(test.body).toMatchSnapshot();
   });
@@ -306,6 +306,111 @@ describe('generateApexTest assertions from the Flow', () => {
     });
     expect(test.body).toContain("Assert.areEqual('a', result.A__c, 'Set should set A__c');");
   });
+
+  it('adds a test that avoids a certain custom error by meeting the other way at its decision', () => {
+    const elements =
+      nullCheck('First', 'Due__c', 'No_Date', 'Fine') +
+      error('No_Date', 'Set a due date') +
+      assign('Fine', 'Ok__c', '<booleanValue>true</booleanValue>');
+    const test = generateApexTest(jobFlow(elements, 'Update', filter('Status__c', 'Closed')), {
+      nullWhenUnset,
+      fieldValues: { Job__c: { Due__c: 'Date.today()' } },
+    });
+    const [blocked, saved] = test.body.split('static void runsFlowOnUpdateWithoutError() {');
+    expect(blocked).toContain("Assert.fail('No_Date should block this save with a custom error');");
+    expect(saved).toContain(
+      "        testRecord.Status__c = 'Closed';\n        testRecord.Due__c = Date.today();\n        update testRecord;",
+    );
+    expect(saved).toContain("Assert.areEqual(true, result.Ok__c, 'Fine should set Ok__c');");
+
+    // Without a value for the field, there is no second test.
+    const single = generateApexTest(jobFlow(elements, 'Update', filter('Status__c', 'Closed')), { nullWhenUnset });
+    expect(single.body).not.toContain('WithoutError');
+    // A second error on the other way means no second test either.
+    const twice = generateApexTest(
+      jobFlow(
+        nullCheck('First', 'Due__c', 'No_Date', 'Also_Bad') + error('No_Date', 'x') + error('Also_Bad', 'y'),
+        'Update',
+        filter('Status__c', 'Closed'),
+      ),
+      { nullWhenUnset, fieldValues: { Job__c: { Due__c: 'Date.today()' } } },
+    );
+    expect(twice.body).not.toContain('WithoutError');
+  });
+
+  it('asserts the records the Flow creates and links to the record', () => {
+    const create = (name: string, fields: string, next = ''): string =>
+      `<recordCreates><name>${name}</name><object>Task</object>${fields}${next ? `<connector><targetReference>${next}</targetReference></connector>` : ''}</recordCreates>`;
+    const field = (name: string, value: string): string =>
+      `<inputAssignments><field>${name}</field><value>${value}</value></inputAssignments>`;
+    const elements =
+      create(
+        'First',
+        field('WhatId', '<elementReference>$Record.Id</elementReference>') +
+          field('Subject', '<stringValue>Call</stringValue>') +
+          field('OwnerId', '<elementReference>$User.Id</elementReference>'),
+        'Second',
+      ) +
+      create('Second', field('WhatId', '<elementReference>$Record.Id</elementReference>'), 'Third') +
+      create('Third', field('Subject', '<stringValue>Loose</stringValue>'), 'Check') +
+      nullCheck('Check', 'Reviewer__c', 'Later', 'Done') +
+      create('Later', field('Subject', '<stringValue>Later</stringValue>'));
+    const test = generateApexTest(jobFlow(elements));
+    expect(test.body).toContain(
+      [
+        '        Boolean found1 = false;',
+        '        for (Task created1 : [SELECT Id, Subject FROM Task WHERE WhatId = :testRecord.Id]) {',
+        "            found1 = found1 || (created1.Subject == 'Call');",
+        '        }',
+        "        Assert.isTrue(found1, 'First should create a Task');",
+        "        Assert.isFalse([SELECT Id FROM Task WHERE WhatId = :testRecord.Id].isEmpty(), 'Second should create a Task');",
+        '        // TODO: Third creates a Task; assert it',
+      ].join('\n'),
+    );
+    expect(test.body).toContain('//   creates a Task (Later)');
+    expect(test.body).toMatchSnapshot();
+  });
+
+  it('follows decisions on checkbox and picklist defaults, prior values, and lookups the test leaves empty', () => {
+    const decision = (name: string, left: string, operator: string, right: string, yes: string, no: string): string =>
+      `<decisions><name>${name}</name><label>${name}</label><defaultConnector><targetReference>${no}</targetReference></defaultConnector><rules><name>${name}_Yes</name><label>Yes</label><conditionLogic>and</conditionLogic><conditions><leftValueReference>${left}</leftValueReference><operator>${operator}</operator><rightValue>${right}</rightValue></conditions><connector><targetReference>${yes}</targetReference></connector></rules></decisions>`;
+    const elements =
+      decision('First', '$Record.Sent__c', 'EqualTo', '<booleanValue>false</booleanValue>', 'Kind', 'Stop') +
+      decision('Kind', '$Record.Kind__c', 'EqualTo', '<stringValue>Tile</stringValue>', 'Changed', 'Stop') +
+      decision('Changed', '$Record.Status__c', 'IsChanged', '<booleanValue>true</booleanValue>', 'Lookup', 'Stop') +
+      `<recordLookups><name>Lookup</name><object>Item__c</object><storeOutputAutomatically>true</storeOutputAutomatically><connector><targetReference>Found</targetReference></connector></recordLookups>` +
+      decision('Found', 'Lookup', 'IsNull', '<booleanValue>true</booleanValue>', 'Set', 'Stop') +
+      assign('Set', 'Out__c', '<stringValue>all</stringValue>') +
+      assign('Stop', 'Out__c', '<stringValue>stopped</stringValue>');
+    const test = generateApexTest(jobFlow(elements, 'Update', filter('Status__c', 'Closed')), {
+      unsetValues: { Job__c: { Sent__c: 'false', Kind__c: "'Tile'", Status__c: null } },
+    });
+    expect(test.body).toContain("\n        Assert.areEqual('all', result.Out__c, 'Set should set Out__c');");
+    expect(test.body).not.toContain('TODO: when');
+  });
+
+  it('asserts output variables an autolaunched Flow is certain to set', () => {
+    const flow = parseFlowXml(
+      'Calc',
+      `<Flow><processType>AutoLaunchedFlow</processType>
+        <variables><name>amount</name><dataType>Number</dataType><isInput>true</isInput><isOutput>false</isOutput><isCollection>false</isCollection></variables>
+        <variables><name>label</name><dataType>String</dataType><isInput>false</isInput><isOutput>true</isOutput><isCollection>false</isCollection></variables>
+        <variables><name>maybe</name><dataType>String</dataType><isInput>false</isInput><isOutput>true</isOutput><isCollection>false</isCollection></variables>
+        <variables><name>record</name><dataType>SObject</dataType><objectType>Item__c</objectType><isInput>true</isInput><isOutput>false</isOutput><isCollection>false</isCollection></variables>
+        ${assign('First', 'label', '<stringValue>zero</stringValue>', 'Check').replace(/\$Record\./g, '')}
+        <decisions><name>Check</name><label>Check</label><rules><name>Big</name><label>Big</label><conditionLogic>and</conditionLogic><conditions><leftValueReference>record</leftValueReference><operator>IsNull</operator><rightValue><booleanValue>true</booleanValue></rightValue></conditions><connector><targetReference>Maybe</targetReference></connector></rules></decisions>
+        ${assign('Maybe', 'maybe', '<stringValue>set</stringValue>').replace(/\$Record\./g, '')}
+        <start><connector><targetReference>First</targetReference></connector></start>
+      </Flow>`,
+    );
+    const test = generateApexTest(flow);
+    expect(test.body).toContain(
+      "Assert.areEqual('zero', interview.getVariableValue('label'), 'First should set label');",
+    );
+    expect(test.body).toContain("Object maybeOutput = interview.getVariableValue('maybe');");
+    expect(test.body).not.toContain('// TODO: assert what this Flow does');
+    expect(test.body).not.toContain("Assert.isNotNull(interview, 'The Flow interview should run');");
+  });
 });
 
 describe('generateApexTest entry-criteria operators', () => {
@@ -415,10 +520,58 @@ describe('generateApexTest entry-criteria operators', () => {
       expect(test.body).not.toContain('TODO: entry criteria formula: ');
     });
 
-    it('leaves other formulas as one TODO', () => {
-      const test = generateApexTest(formulaFlow('OR({!$Record.A__c}, {!$Record.B__c})', 'Delete'));
+    it('meets criteria on a related record by setting fields on the parent it inserts', () => {
+      const test = generateApexTest(formulaFlow('ISPICKVAL({!$Record.Account__r.Type}, "Partner")'), {
+        requiredFields: { Job__c: { Account__c: 'null /* TODO */' }, Account: { Name: "'Test'" } },
+        lookups: { Job__c: { Account__c: 'Account' } },
+        relationships: { Job__c: { Account__r: 'Account__c' } },
+      });
+      expect(test.body).toContain(
+        [
+          '        Account accountParent = new Account(',
+          "            Name = 'Test',",
+          "            Type = 'Partner'",
+          '        );',
+          '        insert accountParent;',
+          '',
+          '        Job__c testRecord = new Job__c(',
+          '            Account__c = accountParent.Id',
+        ].join('\n'),
+      );
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('sets prior values in the insert and the new values in the update', () => {
+      const test = generateApexTest(
+        formulaFlow(
+          'AND(ISPICKVAL({!$Record.Stage__c}, "Done"), ISPICKVAL(PRIORVALUE({!$Record.Stage__c}), "Open"))',
+          'Update',
+        ),
+      );
+      expect(test.body).toContain("        Job__c testRecord = new Job__c(\n            Stage__c = 'Open'\n        );");
+      expect(test.body).toContain("testRecord.Stage__c = 'Done';");
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('meets NotEqualTo, field-to-field comparisons, and date functions', () => {
+      const test = generateApexTest(
+        formulaFlow(
+          'AND({!$Record.Kind__c} <> "Draft", {!$Record.Hours__c} > {!$Record.Cap__c}, {!$Record.Due__c} < TODAY())',
+        ),
+        { fieldValues: { Job__c: { Kind__c: "'Final'", Cap__c: '4' } } },
+      );
+      expect(test.body).toContain("Kind__c = 'Final',");
+      expect(test.body).toContain('Cap__c = 4,');
+      expect(test.body).toContain('Hours__c = 5,');
+      expect(test.body).toContain('Due__c = Date.today().addDays(-1)');
+      expect(test.body).not.toContain('TODO: entry criteria');
+    });
+
+    it('meets an OR formula through one branch, and leaves a formula it cannot read as one TODO', () => {
+      expect(generateApexTest(formulaFlow('OR({!$Record.A__c}, {!$Record.B__c})')).body).toContain('A__c = true');
+      const test = generateApexTest(formulaFlow('OR({!$Record.A__c} ~ 1)', 'Delete'));
       expect(test.body).toContain('delete testRecord;');
-      expect(test.body).toContain('// TODO: entry criteria formula: OR({!$Record.A__c}, {!$Record.B__c})');
+      expect(test.body).toContain('// TODO: entry criteria formula: OR({!$Record.A__c} ~ 1)');
     });
   });
 

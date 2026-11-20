@@ -1,13 +1,18 @@
+import { type Condition, conditionFromRule, type EvaluationEnv, evaluateCondition } from './conditions.js';
 import { asArray, asRecord, type FlowValue, parseFlowValue, text, type XmlRecord } from './flowValues.js';
+import { type Expr, parseFormula } from './formula.js';
 
 /**
- * The parts of a Flow's elements that decide what a test can assert: which `$Record` fields
- * each element writes, how decisions branch, and where custom errors stop the save.
+ * The parts of a Flow's elements that decide what a test can assert: which `$Record` fields and
+ * variables each element writes, which records it creates or looks up, how decisions branch,
+ * and where custom errors stop the save.
  */
 export type FlowGraph = {
   /** The element the start element connects to. */
   start?: string;
   nodes: Record<string, FlowNode>;
+  /** Formula resources by name, for decisions that read them. */
+  formulas: Record<string, Expr>;
 };
 
 /** A write to a field of the triggering record. */
@@ -18,19 +23,16 @@ export type FieldWrite = {
   element: string;
 };
 
-export type FlowCondition = { left: string; operator: string; right: FlowValue };
+/** A write to a variable. */
+export type VariableWrite = { variable: string; value: FlowValue; element: string };
 
-export type DecisionRule = {
-  name: string;
-  label: string;
-  /** `and`, `or`, or custom logic such as `1 AND (2 OR 3)`. */
-  logic?: string;
-  conditions: FlowCondition[];
-  next?: string;
-};
+/** A record the Flow creates, with the fields it sets. */
+export type RecordCreate = { element: string; object: string; fields: Array<{ field: string; value: FlowValue }> };
+
+export type DecisionRule = { name: string; label: string; condition: Condition; next?: string };
 
 export type FlowNode =
-  | { kind: 'write'; name: string; writes: FieldWrite[]; nexts: string[] }
+  | { kind: 'write'; name: string; writes: FieldWrite[]; variables: VariableWrite[]; nexts: string[] }
   | {
       kind: 'decision';
       name: string;
@@ -41,6 +43,10 @@ export type FlowNode =
       nexts: string[];
     }
   | { kind: 'customError'; name: string; message?: string; nexts: string[] }
+  /** Get Records that stores its result in `output`. */
+  | { kind: 'lookup'; name: string; object: string; output: string; nexts: string[] }
+  /** Create Records with its fields set one by one. */
+  | { kind: 'create'; name: string; create: RecordCreate; nexts: string[] }
   /** Loops, waits, screens: a walk can't tell what happens past them. */
   | { kind: 'stop'; name: string; nexts: string[] }
   | { kind: 'other'; name: string; nexts: string[] };
@@ -49,9 +55,7 @@ const PASS_THROUGH_TYPES = [
   'actionCalls',
   'apexPluginCalls',
   'collectionProcessors',
-  'recordCreates',
   'recordDeletes',
-  'recordLookups',
   'recordRollbacks',
   'subflows',
   'transforms',
@@ -61,18 +65,28 @@ const STOP_TYPES = ['loops', 'orchestratedStages', 'screens', 'steps', 'waits'] 
 
 /** XML paths the parser must read as lists even when they hold one element. */
 export const GRAPH_ARRAY_PATHS = [
-  ...[...PASS_THROUGH_TYPES, ...STOP_TYPES, 'assignments', 'decisions', 'recordUpdates', 'customErrors'].map(
-    (type) => `Flow.${type}`,
-  ),
+  ...[
+    ...PASS_THROUGH_TYPES,
+    ...STOP_TYPES,
+    'assignments',
+    'decisions',
+    'recordUpdates',
+    'recordCreates',
+    'recordLookups',
+    'customErrors',
+    'formulas',
+  ].map((type) => `Flow.${type}`),
   'Flow.assignments.assignmentItems',
   'Flow.decisions.rules',
   'Flow.decisions.rules.conditions',
   'Flow.recordUpdates.inputAssignments',
   'Flow.recordUpdates.filters',
+  'Flow.recordCreates.inputAssignments',
   'Flow.customErrors.customErrorMessages',
 ];
 
 const RECORD_FIELD = /^\$Record\.([A-Za-z][A-Za-z0-9_]*)$/;
+const VARIABLE = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 const target = (connector: unknown): string | undefined => text(asRecord(connector)?.targetReference);
 
@@ -88,21 +102,20 @@ function nextsOf(element: XmlRecord): string[] {
   return nexts.filter((next): next is string => !!next);
 }
 
-function assignmentWrites(name: string, element: XmlRecord): FieldWrite[] {
-  return asArray(element.assignmentItems).flatMap((item) => {
-    const field = RECORD_FIELD.exec(text(item.assignToReference) ?? '')?.[1];
-    if (!field) return [];
+function parseAssignment(name: string, element: XmlRecord): FlowNode {
+  const writes: FieldWrite[] = [];
+  const variables: VariableWrite[] = [];
+  for (const item of asArray(element.assignmentItems)) {
+    const reference = text(item.assignToReference) ?? '';
     const operator = text(item.operator) ?? 'Assign';
-    const value = parseFlowValue(asRecord(item.value));
-    // Add, Subtract and the like depend on the field's current value.
-    return [
-      {
-        field,
-        element: name,
-        value: operator === 'Assign' ? value : { rawValue: `${operator} ${value.rawValue ?? ''}`.trim() },
-      },
-    ];
-  });
+    const parsed = parseFlowValue(asRecord(item.value));
+    // Add, Subtract and the like depend on the current value.
+    const value = operator === 'Assign' ? parsed : { rawValue: `${operator} ${parsed.rawValue ?? ''}`.trim() };
+    const field = RECORD_FIELD.exec(reference)?.[1];
+    if (field) writes.push({ field, element: name, value });
+    else if (VARIABLE.test(reference)) variables.push({ variable: reference, element: name, value });
+  }
+  return { kind: 'write', name, writes, variables, nexts: nextsOf(element) };
 }
 
 /** Update Records on the triggering record: `$Record` itself, or the record whose Id is `$Record.Id`. */
@@ -117,25 +130,25 @@ function updatesRecord(element: XmlRecord): boolean {
   );
 }
 
-function updateWrites(name: string, element: XmlRecord): FieldWrite[] {
+function fieldAssignments(element: XmlRecord): Array<{ field: string; value: FlowValue }> {
   return asArray(element.inputAssignments).flatMap((assignment) => {
     const field = text(assignment.field);
-    return field ? [{ field, element: name, value: parseFlowValue(asRecord(assignment.value)) }] : [];
+    return field ? [{ field, value: parseFlowValue(asRecord(assignment.value)) }] : [];
   });
 }
 
 function parseDecision(name: string, element: XmlRecord): FlowNode {
   const rules = asArray(element.rules).map((rule) => {
     const ruleName = text(rule.name) ?? '';
+    const conditions = asArray(rule.conditions).map((condition) => ({
+      left: text(condition.leftValueReference) ?? '',
+      operator: text(condition.operator) ?? '',
+      right: parseFlowValue(asRecord(condition.rightValue)),
+    }));
     return {
       name: ruleName,
       label: text(rule.label) ?? ruleName,
-      logic: text(rule.conditionLogic),
-      conditions: asArray(rule.conditions).map((condition) => ({
-        left: text(condition.leftValueReference) ?? '',
-        operator: text(condition.operator) ?? '',
-        right: parseFlowValue(asRecord(condition.rightValue)),
-      })),
+      condition: conditionFromRule(conditions, text(rule.conditionLogic)),
       next: target(rule.connector),
     };
   });
@@ -159,17 +172,36 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
       if (name) nodes[name] = build(name, element);
     }
   };
-  each('assignments', (name, element) => ({
-    kind: 'write',
-    name,
-    writes: assignmentWrites(name, element),
-    nexts: nextsOf(element),
-  }));
+  each('assignments', parseAssignment);
   each('recordUpdates', (name, element) =>
     updatesRecord(element)
-      ? { kind: 'write', name, writes: updateWrites(name, element), nexts: nextsOf(element) }
+      ? {
+          kind: 'write',
+          name,
+          writes: fieldAssignments(element).map((a) => ({ ...a, element: name })),
+          variables: [],
+          nexts: nextsOf(element),
+        }
       : { kind: 'other', name, nexts: nextsOf(element) },
   );
+  each('recordCreates', (name, element) => {
+    const object = text(element.object);
+    // A create from a record variable doesn't say which fields it sets.
+    if (!object || text(element.inputReference)) return { kind: 'other', name, nexts: nextsOf(element) };
+    return {
+      kind: 'create',
+      name,
+      create: { element: name, object, fields: fieldAssignments(element) },
+      nexts: nextsOf(element),
+    };
+  });
+  each('recordLookups', (name, element) => {
+    const object = text(element.object);
+    const output = text(element.storeOutputAutomatically) === 'true' ? name : text(element.outputReference);
+    return object && output
+      ? { kind: 'lookup', name, object, output, nexts: nextsOf(element) }
+      : { kind: 'other', name, nexts: nextsOf(element) };
+  });
   each('decisions', parseDecision);
   each('customErrors', (name, element) => ({
     kind: 'customError',
@@ -180,12 +212,20 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
   for (const type of PASS_THROUGH_TYPES)
     each(type, (name, element) => ({ kind: 'other', name, nexts: nextsOf(element) }));
   for (const type of STOP_TYPES) each(type, (name, element) => ({ kind: 'stop', name, nexts: nextsOf(element) }));
-  return { start: target(asRecord(flow.start)?.connector), nodes };
+
+  const formulas: Record<string, Expr> = {};
+  for (const formula of asArray(flow.formulas)) {
+    const name = text(formula.name);
+    const expr = parseFormula(text(formula.expression) ?? '');
+    if (name && expr) formulas[name] = expr;
+  }
+  return { start: target(asRecord(flow.start)?.connector), nodes, formulas };
 }
 
 /**
- * What the test knows about the triggering record's fields when the Flow runs: an Apex literal,
- * `null` for a field known to be empty, and no entry for a field it can't know.
+ * What the test knows when the Flow runs, by reference (`$Record.Status__c`,
+ * `$Record__Prior.Status__c`, `myVariable`): an Apex literal, `null` for a known-empty value, and
+ * no entry for a value it can't know.
  */
 export type FieldState = Map<string, string | null>;
 
@@ -193,90 +233,41 @@ export type FieldState = Map<string, string | null>;
 export type UndecidedOutcome = {
   label: string;
   writes: FieldWrite[];
+  variables: VariableWrite[];
+  creates: RecordCreate[];
   /** True when a custom error can stop the save on this outcome. */
   customError: boolean;
 };
 
+/** A decision the walk took, and the rule it took (undefined for the default outcome). */
+export type DecisionTaken = { element: string; rule?: DecisionRule };
+
 export type FlowWalk = {
-  /** Writes certain to happen, in order. */
+  /** `$Record` writes certain to happen, in order. */
   writes: FieldWrite[];
+  /** Variable writes certain to happen, in order. */
+  variables?: VariableWrite[];
+  /** Records the Flow is certain to create. */
+  creates?: RecordCreate[];
+  /** Decisions taken, in order. */
+  decisions?: DecisionTaken[];
   /** A custom error certain to stop the save. */
   customError?: { element: string; message?: string };
   /** Where the walk stopped, and what each way on can do. */
   undecided?: { element: string; outcomes: UndecidedOutcome[] };
 };
 
-type Literal = { kind: 'string' | 'number' | 'boolean'; value: string };
+export type WalkOptions = {
+  /**
+   * Whether the org has no records of `object` the Flow could find. Apex tests see no org data,
+   * so this holds for data the test (and the Flow, before the lookup) doesn't create.
+   */
+  emptyObject?(object: string): boolean;
+};
 
-function literal(apexValue: string): Literal | undefined {
-  const quoted = /^'((?:[^'\\]|\\.)*)'$/.exec(apexValue);
-  if (quoted) return { kind: 'string', value: quoted[1].replace(/\\(.)/g, '$1') };
-  if (/^-?\d+(\.\d+)?$/.test(apexValue)) return { kind: 'number', value: String(Number(apexValue)) };
-  if (apexValue === 'true' || apexValue === 'false') return { kind: 'boolean', value: apexValue };
-  return undefined;
-}
-
-/** True or false when the state decides the comparison, undefined when it can't. */
-function compare(value: string, operator: string, right: string): boolean | undefined {
-  const left = literal(value);
-  const other = literal(right);
-  if (!left || !other || left.kind !== other.kind) return undefined;
-  if (operator === 'EqualTo' || operator === 'NotEqualTo') {
-    let equal: boolean | undefined = left.value === other.value;
-    // Text comparisons may ignore case; don't guess either way.
-    if (!equal && left.kind === 'string' && left.value.toLowerCase() === other.value.toLowerCase()) equal = undefined;
-    if (equal === undefined) return undefined;
-    return operator === 'EqualTo' ? equal : !equal;
-  }
-  if (left.kind !== 'number') return undefined;
-  const [a, b] = [Number(left.value), Number(other.value)];
-  switch (operator) {
-    case 'GreaterThan':
-      return a > b;
-    case 'GreaterThanOrEqualTo':
-      return a >= b;
-    case 'LessThan':
-      return a < b;
-    case 'LessThanOrEqualTo':
-      return a <= b;
-    default:
-      return undefined;
-  }
-}
-
-function evaluateCondition(condition: FlowCondition, state: FieldState): boolean | undefined {
-  const field = RECORD_FIELD.exec(condition.left)?.[1];
-  if (!field || !state.has(field)) return undefined;
-  const value = state.get(field) ?? null;
-  if (condition.operator === 'IsNull') {
-    const raw = condition.right.rawValue;
-    if (raw !== 'true' && raw !== 'false') return undefined;
-    return raw === 'true' ? value === null : value !== null;
-  }
-  const right = condition.right.apexValue;
-  if (right === undefined) return undefined;
-  if (value === null) {
-    if (condition.operator === 'EqualTo') return false;
-    if (condition.operator === 'NotEqualTo') return true;
-    return undefined;
-  }
-  return compare(value, condition.operator, right);
-}
-
-function evaluateRule(rule: DecisionRule, state: FieldState): boolean | undefined {
-  if (rule.conditions.length === 0) return undefined;
-  const logic = (rule.logic ?? 'and').toLowerCase();
-  if (logic !== 'and' && logic !== 'or') return undefined;
-  const results = rule.conditions.map((condition) => evaluateCondition(condition, state));
-  const decisive = logic === 'and' ? false : true;
-  if (results.includes(decisive)) return decisive;
-  return results.includes(undefined) ? undefined : !decisive;
-}
-
-/** Every write and custom error reachable from `starts`, along any path. */
+/** Every write, create, and custom error reachable from `starts`, along any path. */
 function reachable(graph: FlowGraph, starts: Array<string | undefined>): Omit<UndecidedOutcome, 'label'> {
-  const writes: FieldWrite[] = [];
-  let customError = false;
+  const outcome: Omit<UndecidedOutcome, 'label'> = { writes: [], variables: [], creates: [], customError: false };
   const seen = new Set<string>();
   const queue = starts.filter((s): s is string => !!s);
   while (queue.length > 0) {
@@ -285,11 +276,15 @@ function reachable(graph: FlowGraph, starts: Array<string | undefined>): Omit<Un
     seen.add(name);
     const node = graph.nodes[name];
     if (!node) continue;
-    if (node.kind === 'write') writes.push(...node.writes);
-    if (node.kind === 'customError') customError = true;
+    if (node.kind === 'write') {
+      outcome.writes.push(...node.writes);
+      outcome.variables.push(...node.variables);
+    }
+    if (node.kind === 'create') outcome.creates.push(node.create);
+    if (node.kind === 'customError') outcome.customError = true;
     queue.push(...node.nexts);
   }
-  return { writes, customError };
+  return outcome;
 }
 
 function undecidedAt(graph: FlowGraph, node: FlowNode): FlowWalk['undecided'] {
@@ -302,7 +297,7 @@ function undecidedAt(graph: FlowGraph, node: FlowNode): FlowWalk['undecided'] {
       : [{ label: `after ${node.name}`, ...reachable(graph, node.nexts) }];
   return {
     element: node.kind === 'decision' ? node.label : node.name,
-    outcomes: outcomes.filter((o) => o.writes.length > 0 || o.customError),
+    outcomes: outcomes.filter((o) => o.writes.length + o.variables.length + o.creates.length > 0 || o.customError),
   };
 }
 
@@ -310,9 +305,20 @@ function undecidedAt(graph: FlowGraph, node: FlowNode): FlowWalk['undecided'] {
  * Follows the Flow from its start for a record in the given state, through every decision the
  * state decides, and reports what is certain to happen.
  */
-export function walkFlow(graph: FlowGraph, initial: FieldState): FlowWalk {
+export function walkFlow(graph: FlowGraph, initial: FieldState, options: WalkOptions = {}): FlowWalk {
   const state = new Map(initial);
-  const writes: FieldWrite[] = [];
+  const env: EvaluationEnv = { get: (reference) => state.get(reference), formula: (name) => graph.formulas[name] };
+  const walk: Required<Omit<FlowWalk, 'customError' | 'undecided'>> = {
+    writes: [],
+    variables: [],
+    creates: [],
+    decisions: [],
+  };
+  const created = new Set<string>();
+  const set = (reference: string, value: FlowValue): void => {
+    if (value.apexValue === undefined) state.delete(reference);
+    else state.set(reference, value.apexValue);
+  };
   const seen = new Set<string>();
   let current = graph.start;
   while (current && !seen.has(current)) {
@@ -322,34 +328,46 @@ export function walkFlow(graph: FlowGraph, initial: FieldState): FlowWalk {
     switch (node.kind) {
       case 'write':
         for (const write of node.writes) {
-          writes.push(write);
-          if (write.value.apexValue === undefined) state.delete(write.field);
-          else state.set(write.field, write.value.apexValue);
+          walk.writes.push(write);
+          set(`$Record.${write.field}`, write.value);
+        }
+        for (const write of node.variables) {
+          walk.variables.push(write);
+          set(write.variable, write.value);
         }
         current = node.nexts[0];
         break;
+      case 'create':
+        walk.creates.push(node.create);
+        created.add(node.create.object);
+        current = node.nexts[0];
+        break;
+      case 'lookup':
+        if (!created.has(node.object) && options.emptyObject?.(node.object)) state.set(node.output, null);
+        else state.delete(node.output);
+        current = node.nexts[0];
+        break;
       case 'customError':
-        return { writes, customError: { element: node.name, message: node.message } };
+        return { ...walk, customError: { element: node.name, message: node.message } };
       case 'decision': {
-        let next: string | undefined;
-        let decided = false;
+        let taken: DecisionRule | undefined;
         for (const rule of node.rules) {
-          const result = evaluateRule(rule, state);
-          if (result === undefined) return { writes, undecided: undecidedAt(graph, node) };
+          const result = evaluateCondition(rule.condition, env);
+          if (result === undefined) return { ...walk, undecided: undecidedAt(graph, node) };
           if (result) {
-            next = rule.next;
-            decided = true;
+            taken = rule;
             break;
           }
         }
-        current = decided ? next : node.defaultNext;
+        walk.decisions.push({ element: node.name, rule: taken });
+        current = taken ? taken.next : node.defaultNext;
         break;
       }
       case 'stop':
-        return { writes, undecided: undecidedAt(graph, node) };
+        return { ...walk, undecided: undecidedAt(graph, node) };
       default:
         current = node.nexts[0];
     }
   }
-  return { writes };
+  return walk;
 }

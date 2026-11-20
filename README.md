@@ -96,18 +96,18 @@ The gate checks the Flow's active version in the org (or its latest version if n
 | Flow type | Generated test |
 | --- | --- |
 | Record-triggered (create, update, delete) | Builds a record of the trigger object that meets the entry criteria, inserts, updates, or deletes it, and asserts what the Flow does (see below). Create-and-update Flows get one test method for each. |
-| Autolaunched (no trigger) | Starts the Flow with `Flow.Interview.createInterview`, with a placeholder for every input variable and a read of every output variable. |
+| Autolaunched (no trigger) | Starts the Flow with `Flow.Interview.createInterview`, with a placeholder for every input variable, and asserts the output variables it is certain to set. |
 | Platform event | Publishes the event and delivers it with `Test.getEventBus().deliver()`. |
 | Schedule-triggered | Starts the Flow directly, since Apex tests can't fire the schedule. |
 | Process Builder | A placeholder test to fill in. |
 
-Entry criteria are met for `EqualTo`, comparisons (`GreaterThan`, `LessThan`, and their `OrEqualTo` forms), `Contains`/`StartsWith`/`EndsWith`, `IsChanged`, and `IsNull`, and for formulas that are an `AND(...)` of simple conditions on the record's own fields.
+Entry criteria are read as one condition, whether they are filters (with AND, OR, or custom logic such as `1 OR (2 AND 3)`) or a formula. The command meets one branch of an `OR` or `IF`, and handles every filter operator, comparisons with literals, other fields, `$User.Id`, and `TODAY()`/`NOW()`/`DATE()`, `$Record__Prior` and `PRIORVALUE` in update tests, and fields on related records such as `{!$Record.Account__r.Type}`, which it sets on the parent record it inserts.
 
-With a target org (`--target-org` or your default org), the command describes each object the test creates and fills in its required fields: text, numbers, dates, and the default picklist value. It meets "is not null" criteria by giving those fields a value, and fills required lookups with a parent record it inserts (or the running user, or the standard price book). Without an org, only common standard objects (Account, Contact, Opportunity, and so on) get required fields.
+With a target org (`--target-org` or your default org), the command describes each object the test creates and fills in its required fields: text, numbers, dates, and the default picklist value. It meets "is not null" criteria by giving those fields a value, and fills required lookups with a parent record it inserts, up to three levels of parents deep (or the running user, the standard price book, the default business hours, or one of the object's record types). Without an org, only common standard objects (Account, Contact, Opportunity, and so on) get required fields.
 
-For record-triggered Flows, the command follows the Flow's elements for the record the test creates. It asserts the fields the Flow is certain to set, and when the Flow is certain to block the save with a custom error, the test expects that error. Fields the Flow sets only on a decision outcome it can't predict get commented-out assertions.
+For record-triggered Flows, the command follows the Flow's elements for the record the test creates, deciding each decision the record settles. That includes formula resources, checkbox defaults, picklist defaults on objects without record types, and lookups on data the test doesn't create, which find nothing in an Apex test. It asserts the fields the Flow is certain to set and the records it is certain to create. When the Flow is certain to block the save with a custom error, the test expects that error, and a second test sets the fields that avoid it. What the Flow does only on a decision outcome it can't predict gets commented-out assertions.
 
-Every generated test has TODOs for anything it couldn't fill in, such as entry criteria it couldn't meet (cross-object fields, `OR` formulas) and assertions it couldn't work out. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`.
+Every generated test has TODOs for anything it couldn't fill in, such as entry criteria it couldn't meet and assertions it couldn't work out. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`.
 
 ## Coverage reports
 
@@ -300,12 +300,19 @@ DESCRIPTION
   record-triggered Flows get a record built from the trigger object and entry criteria, autolaunched Flows are started
   with Flow.Interview and their input variables, and platform event Flows publish the event. When a target org is
   available (--target-org or a default org), the command describes each object the test creates and fills in its
-  required fields, the fields the entry criteria need, and parent records for required lookups.
+  required fields, the fields the entry criteria need, and parent records (and their parents) for required lookups.
 
-  For record-triggered Flows, the command follows the Flow's elements for the record the test creates. It asserts the
-  fields the Flow is certain to set, and when the Flow is certain to stop the save with a custom error, the test expects
-  that error. Fields the Flow sets only on a decision outcome the command can't predict get commented-out assertions.
-  The generated tests have TODOs for anything the command can't fill in.
+  Entry criteria are read as one condition, whether they are filters (with AND, OR, or custom logic) or a formula. The
+  command meets one branch of an OR, and handles comparisons with literals, other fields, `$User.Id`, and `TODAY()`;
+  `$Record__Prior` values in update tests; and fields on related records, which it sets on the parent record it inserts.
+
+  For record-triggered Flows, the command follows the Flow's elements for the record the test creates, deciding each
+  decision the record settles (including formula resources, and lookups on data the test doesn't create, which find
+  nothing in an Apex test). It asserts the fields the Flow is certain to set and the records it is certain to create.
+  When the Flow is certain to stop the save with a custom error, the test expects that error, and a second test sets the
+  fields that avoid it. For autolaunched Flows, it asserts output variables the Flow is certain to set. What the Flow
+  does only on a decision outcome the command can't predict gets commented-out assertions. The generated tests have
+  TODOs for anything the command can't fill in.
 
   Only Apex tests count toward deploying Flows as active, so this command generates Apex, not Flow Builder tests.
 

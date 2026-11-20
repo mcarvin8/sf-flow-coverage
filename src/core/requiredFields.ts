@@ -12,10 +12,17 @@ export type DescribeField = {
   length?: number;
   picklistValues?: Array<{ value: string; active: boolean; defaultValue?: boolean }> | null;
   referenceTo?: string[] | null;
+  /** The field's default value, such as a checkbox's `true` or `false`. */
+  defaultValue?: unknown;
+  /** For lookups, the relationship name used in paths such as `Account__r.Type`. */
+  relationshipName?: string | null;
 };
 
 /** Describes an sObject's fields. Returns undefined when the object can't be described. */
-export type DescribeObject = (objectName: string) => Promise<DescribeField[] | undefined>;
+export type DescribeObject = (objectName: string) => Promise<DescribeField[] | DescribeResult | undefined>;
+
+/** An sObject describe: its fields, and its record types when known. */
+export type DescribeResult = { fields: DescribeField[]; recordTypeInfos?: unknown[] };
 
 /** Field name to Apex literal, per object. */
 export type RequiredFieldMap = Record<string, Record<string, string>>;
@@ -150,8 +157,12 @@ export type ObjectFields = {
   changedValues: RequiredFieldMap;
   /** The object each lookup field points to, per object. Only lookups to a single object are listed. */
   lookups: Record<string, Record<string, string>>;
-  /** Fields that stay empty when a test doesn't set them (no default value), per object. */
-  nullWhenUnset: Record<string, string[]>;
+  /** Lookup field per relationship name (`Account__r` to `Account__c`), per object. */
+  relationships: Record<string, Record<string, string>>;
+  /** How many record types each object has, including Master, when the describe says. */
+  recordTypes: Record<string, number>;
+  /** What a new record holds in each field a test doesn't set, per object (see `unsetFieldValues`). */
+  unsetValues: Record<string, Record<string, string | null>>;
 };
 
 export const emptyObjectFields = (): ObjectFields => ({
@@ -159,7 +170,9 @@ export const emptyObjectFields = (): ObjectFields => ({
   fieldValues: {},
   changedValues: {},
   lookups: {},
-  nullWhenUnset: {},
+  relationships: {},
+  recordTypes: {},
+  unsetValues: {},
 });
 
 /** Lookup targets a test points at an existing record instead of inserting one. */
@@ -179,34 +192,63 @@ const NOT_INSERTABLE = new Set([
   'UserRole',
 ]);
 
+/** Parents are inserted this many levels deep at most: parent, grandparent, great-grandparent. */
+export const MAX_PARENT_DEPTH = 3;
+
 /** Whether a generated test can insert a record of `object` to fill a lookup to it. */
 export const canInsertParent = (object: string): boolean =>
   !NOT_INSERTABLE.has(object) && !(object in EXISTING_RECORD_IDS);
 
 /**
- * Fields a new record leaves empty unless the test sets them: createable, nillable, and with no
- * default value. Lets a test know how the Flow's decisions read the fields it doesn't set.
+ * What a new record holds in each field the test doesn't set, as an Apex literal (or `null`):
+ * empty for nillable fields with no default, a checkbox's default, and the default picklist
+ * value when the object has no record types that could change it (`recordTypes` of 1 or
+ * fewer). Lets a test follow the Flow's decisions on fields it doesn't set.
  */
-export function nullWhenUnsetFields(fields: DescribeField[]): string[] {
-  return fields
-    .filter(
-      (field) =>
-        field.createable &&
-        field.nillable &&
-        !field.defaultedOnCreate &&
-        !field.calculated &&
-        !field.autoNumber &&
-        !(field.picklistValues ?? []).some((value) => value.defaultValue),
-    )
-    .map((field) => field.name);
+export function unsetFieldValues(fields: DescribeField[], recordTypes?: number): Record<string, string | null> {
+  const values: Record<string, string | null> = {};
+  for (const field of fields) {
+    if (!field.createable || field.calculated || field.autoNumber) continue;
+    const pickDefault = (field.picklistValues ?? []).find((value) => value.active && value.defaultValue);
+    if (field.type === 'boolean' && (field.defaultValue === true || field.defaultValue === false)) {
+      values[field.name] = String(field.defaultValue);
+    } else if (field.type === 'boolean' && (field.defaultValue === 'true' || field.defaultValue === 'false')) {
+      values[field.name] = field.defaultValue;
+    } else if (pickDefault) {
+      // Record types can give a picklist a different default.
+      if (field.type === 'picklist' && recordTypes !== undefined && recordTypes <= 1) {
+        values[field.name] = `'${escapeApexString(pickDefault.value)}'`;
+      }
+    } else if (field.nillable && !field.defaultedOnCreate) {
+      values[field.name] = null;
+    }
+  }
+  return values;
 }
 
-/** Createable lookups to exactly one object (polymorphic lookups like `WhatId` are left out). */
+/** Lookup field per relationship name, for criteria on related records. */
+export function relationshipLookups(fields: DescribeField[]): Record<string, string> {
+  const relationships: Record<string, string> = {};
+  for (const field of fields) {
+    if (field.type === 'reference' && field.relationshipName) relationships[field.relationshipName] = field.name;
+  }
+  return relationships;
+}
+
+/**
+ * The object each createable lookup points to. A polymorphic lookup (`WhatId`, `OwnerId`) gets
+ * the running user when it can point at users, else the first object a test can insert.
+ */
 export function lookupTargets(fields: DescribeField[]): Record<string, string> {
   const targets: Record<string, string> = {};
   for (const field of fields) {
     if (field.type !== 'reference' || !field.createable || field.calculated) continue;
-    if (field.referenceTo?.length === 1) targets[field.name] = field.referenceTo[0];
+    const options = field.referenceTo ?? [];
+    const target =
+      options.length === 1
+        ? options[0]
+        : (options.find((o) => o in EXISTING_RECORD_IDS) ?? options.find((o) => canInsertParent(o)));
+    if (target) targets[field.name] = target;
   }
   return targets;
 }
@@ -222,18 +264,23 @@ export async function loadObjectFields(
 ): Promise<ObjectFields> {
   for (const object of [...new Set(objects)]) {
     if (object in into.requiredFields) continue;
-    let fields: DescribeField[] | undefined;
+    let result: DescribeField[] | DescribeResult | undefined;
     try {
-      fields = await describe(object);
+      result = await describe(object);
     } catch {
-      fields = undefined;
+      result = undefined;
+    }
+    const fields = Array.isArray(result) ? result : result?.fields;
+    if (result && !Array.isArray(result) && result.recordTypeInfos) {
+      into.recordTypes[object] = result.recordTypeInfos.length;
     }
     if (fields) {
       into.requiredFields[object] = requiredFieldValues(fields);
       into.fieldValues[object] = settableFieldValues(fields);
       into.changedValues[object] = changedFieldValues(fields);
       into.lookups[object] = lookupTargets(fields);
-      into.nullWhenUnset[object] = nullWhenUnsetFields(fields);
+      into.relationships[object] = relationshipLookups(fields);
+      into.unsetValues[object] = unsetFieldValues(fields, into.recordTypes[object]);
     }
   }
   return into;

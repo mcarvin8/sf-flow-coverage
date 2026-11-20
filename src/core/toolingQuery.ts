@@ -1,7 +1,7 @@
 import type { Connection } from '@salesforce/core';
 
 import type { DataQuery, MetadataRead } from './flowSettings.js';
-import type { DescribeField, DescribeObject } from './requiredFields.js';
+import type { DescribeField, DescribeObject, DescribeResult } from './requiredFields.js';
 import type { ToolingQuery } from './types.js';
 
 const MAX_FETCH = 1_000_000;
@@ -28,8 +28,8 @@ export function metadataRead(connection: Pick<Connection, 'metadata'>): Metadata
 
 /** Adapts an org connection to the DescribeObject used by scaffolding to fill required fields. */
 export function describeObject(connection: Pick<Connection, 'describe'>): DescribeObject {
-  return async (objectName: string): Promise<DescribeField[]> => {
+  return async (objectName: string): Promise<DescribeResult> => {
     const result = await connection.describe(objectName);
-    return result.fields as unknown as DescribeField[];
+    return { fields: result.fields as unknown as DescribeField[], recordTypeInfos: result.recordTypeInfos };
   };
 }

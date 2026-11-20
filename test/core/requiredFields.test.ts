@@ -9,9 +9,9 @@ import {
   type DescribeField,
   loadObjectFields,
   lookupTargets,
-  nullWhenUnsetFields,
   requiredFieldValues,
   settableFieldValues,
+  unsetFieldValues,
 } from '../../src/core/requiredFields.js';
 import type { FlowMetadata } from '../../src/core/types.js';
 
@@ -107,7 +107,9 @@ describe('loadObjectFields', () => {
       fieldValues: { Installation__c: { Crew_Size__c: '1' } },
       changedValues: { Installation__c: { Crew_Size__c: '2' } },
       lookups: { Installation__c: {} },
-      nullWhenUnset: { Installation__c: [] },
+      unsetValues: { Installation__c: {} },
+      relationships: { Installation__c: {} },
+      recordTypes: {},
     });
   });
 
@@ -125,37 +127,58 @@ describe('loadObjectFields', () => {
 });
 
 describe('lookupTargets', () => {
-  it('lists createable lookups to a single object', () => {
+  it('lists createable lookups, picking a target for polymorphic ones', () => {
     expect(
       lookupTargets([
         field('Account__c', 'reference', { referenceTo: ['Account'] }),
-        field('WhatId', 'reference', { referenceTo: ['Account', 'Opportunity'] }),
+        field('WhatId', 'reference', { referenceTo: ['RecordType', 'Opportunity', 'Account'] }),
+        field('OwnerId', 'reference', { referenceTo: ['Group', 'User'] }),
+        field('Setup__c', 'reference', { referenceTo: ['Group', 'Profile'] }),
         field('CreatedById', 'reference', { referenceTo: ['User'], createable: false }),
         field('Formula__c', 'reference', { referenceTo: ['Account'], calculated: true }),
         field('Other__c', 'reference'),
         field('Name', 'string'),
       ]),
-    ).toEqual({ Account__c: 'Account' });
+    ).toEqual({ Account__c: 'Account', WhatId: 'Opportunity', OwnerId: 'User' });
   });
 });
 
-describe('nullWhenUnsetFields', () => {
-  it('lists createable, nillable fields with no default value', () => {
-    expect(
-      nullWhenUnsetFields([
-        field('Notes__c', 'string', { nillable: true }),
-        field('Name', 'string'),
-        field('Stage__c', 'picklist', { nillable: true, defaultedOnCreate: true }),
-        field('Type__c', 'picklist', {
-          nillable: true,
-          picklistValues: [{ value: 'A', active: true, defaultValue: true }],
-        }),
-        field('Kind__c', 'picklist', { nillable: true, picklistValues: [{ value: 'A', active: true }] }),
-        field('Total__c', 'double', { nillable: true, calculated: true }),
-        field('Number__c', 'string', { nillable: true, autoNumber: true }),
-        field('Locked__c', 'string', { nillable: true, createable: false }),
-      ]),
-    ).toEqual(['Notes__c', 'Kind__c']);
+describe('unsetFieldValues', () => {
+  const fields = [
+    field('Notes__c', 'string', { nillable: true }),
+    field('Name', 'string'),
+    field('Stage__c', 'picklist', { nillable: true, defaultedOnCreate: true }),
+    field('Type__c', 'picklist', {
+      nillable: true,
+      defaultedOnCreate: true,
+      picklistValues: [
+        { value: 'Old', active: false, defaultValue: true },
+        { value: "Tile's", active: true, defaultValue: true },
+      ],
+    }),
+    field('Kind__c', 'picklist', { nillable: true, picklistValues: [{ value: 'A', active: true }] }),
+    field('Done__c', 'boolean', { defaultedOnCreate: true, defaultValue: false }),
+    field('Sent__c', 'boolean', { defaultedOnCreate: true, defaultValue: 'true' }),
+    field('Odd__c', 'boolean', { defaultedOnCreate: true, defaultValue: 'maybe' }),
+    field('Total__c', 'double', { nillable: true, calculated: true }),
+    field('Number__c', 'string', { nillable: true, autoNumber: true }),
+    field('Locked__c', 'string', { nillable: true, createable: false }),
+  ];
+
+  it('gives empty fields, checkbox defaults, and picklist defaults when no record type can change them', () => {
+    expect(unsetFieldValues(fields, 1)).toEqual({
+      Notes__c: null,
+      Type__c: "'Tile\\'s'",
+      Kind__c: null,
+      Done__c: 'false',
+      Sent__c: 'true',
+    });
+  });
+
+  it('leaves picklist defaults out when the object has record types, or when that is unknown', () => {
+    for (const recordTypes of [3, undefined]) {
+      expect(unsetFieldValues(fields, recordTypes)).not.toHaveProperty('Type__c');
+    }
   });
 });
 
@@ -243,6 +266,73 @@ describe('generateApexTest with lookups', () => {
     expect(test.body).toContain('Account__c = null /* TODO: set a Account Id */');
     expect(test.body).toContain('Type__c = null /* TODO: set a RecordType Id */');
     expect(test.body).not.toContain('accountParent');
+  });
+
+  it('inserts grandparents first, and keeps the TODO for cycles and past the depth limit', () => {
+    const todo = (target: string) => `null /* TODO: set a ${target} Id */`;
+    const test = generateApexTest(recordFlow(), {
+      requiredFields: {
+        Job__c: { Account__c: todo('Account') },
+        Account: { Name: "'A'", Region__c: todo('Region__c'), ParentId: todo('Account') },
+        Region__c: { Name: "'R'", Zone__c: todo('Zone__c') },
+        Zone__c: { Name: "'Z'", Area__c: todo('Area__c') },
+        Area__c: { Name: "'X'" },
+      },
+      lookups: {
+        Job__c: { Account__c: 'Account' },
+        Account: { Region__c: 'Region__c', ParentId: 'Account' },
+        Region__c: { Zone__c: 'Zone__c' },
+        Zone__c: { Area__c: 'Area__c' },
+      },
+    });
+    expect(test.body).toContain(
+      [
+        '        Zone__c zoneParent = new Zone__c(',
+        "            Name = 'Z',",
+        '            Area__c = null /* TODO: set a Area__c Id */',
+        '        );',
+        '        insert zoneParent;',
+        '        Region__c regionParent = new Region__c(',
+        "            Name = 'R',",
+        '            Zone__c = zoneParent.Id',
+        '        );',
+        '        insert regionParent;',
+        '        Account accountParent = new Account(',
+        "            Name = 'A',",
+        '            Region__c = regionParent.Id,',
+        '            ParentId = null /* TODO: set a Account Id */',
+        '        );',
+        '        insert accountParent;',
+        '',
+        '        Job__c testRecord = new Job__c(',
+        '            Account__c = accountParent.Id',
+      ].join('\n'),
+    );
+    expect(test.body).not.toContain('areaParent');
+  });
+
+  it('reads business hours and record types the org already has', () => {
+    const test = generateApexTest(
+      recordFlow({
+        filters: [
+          { field: 'BusinessHoursId', operator: 'IsNull', apexValue: 'false', rawValue: 'false' },
+          { field: 'RecordTypeId', operator: 'IsNull', apexValue: 'false', rawValue: 'false' },
+        ],
+      }),
+      {
+        lookups: { Job__c: { BusinessHoursId: 'BusinessHours', RecordTypeId: 'RecordType' } },
+        recordTypes: { Job__c: 3 },
+      },
+    );
+    expect(test.body).toContain('BusinessHoursId = [SELECT Id FROM BusinessHours WHERE IsDefault = true LIMIT 1].Id,');
+    expect(test.body).toContain(
+      "RecordTypeId = [SELECT Id FROM RecordType WHERE SobjectType = 'Job__c' AND IsActive = true LIMIT 1].Id",
+    );
+    const noTypes = generateApexTest(
+      recordFlow({ filters: [{ field: 'RecordTypeId', operator: 'IsNull', apexValue: 'false', rawValue: 'false' }] }),
+      { lookups: { Job__c: { RecordTypeId: 'RecordType' } }, recordTypes: { Job__c: 1 } },
+    );
+    expect(noTypes.body).toContain('// TODO: entry criteria: RecordTypeId IsNull false');
   });
 
   it('fills required lookups on sObject inputs of autolaunched Flows', () => {
@@ -369,8 +459,8 @@ describe('generateApexTest with IsNull false criteria', () => {
     expect(test.body).not.toContain('TODO: entry criteria: Crew_Size__c');
     expect(test.body).not.toContain('TODO: entry criteria: Panels_Required__c');
     expect(test.body).toContain('// TODO: entry criteria: Account__c IsNull false');
-    expect(test.body).toContain('// TODO: entry criteria: Signed_Off_By__c IsNull true');
-    expect(test.body).not.toContain("Signed_Off_By__c = 'Test'");
+    // IsNull true is met by leaving the field empty.
+    expect(test.body).not.toContain('Signed_Off_By__c');
   });
 
   it('fills the fields in the update so they change', () => {
