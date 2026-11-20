@@ -38,7 +38,7 @@ sf plugins install sf-flow-coverage@x.y.z
 
 ```bash
 # 1. Run Apex tests so the org's Flow coverage is current
-sf apex run test --test-level RunLocalTests --wait 60 --target-org prod
+sf apex run test --test-level RunLocalTests --code-coverage --wait 60 --target-org prod
 
 # 2. See how far you are from 75%, and which Flows to cover first
 sf flowcov readiness --target-org prod --since "6 months ago"
@@ -53,7 +53,8 @@ sf flowcov gate --target-org ci-sandbox --from origin/main --to HEAD
 ## How coverage is measured
 
 - **What counts.** Active Flows with the process types Salesforce counts toward deploy-as-active: autolaunched Flows (including record-triggered, platform event and schedule-triggered Flows) and Process Builder processes. Screen Flows don't count.
-- **Where it comes from.** Salesforce records which Flow versions each Apex test runs in the Tooling API `FlowTestCoverage` object when Apex tests run in the org. All three commands read it, so run your Apex tests before using them. Check-only deployments (`sf project deploy validate`) run tests but don't record Flow coverage, so use `sf apex run test` or a real deployment.
+- **Where it comes from.** Salesforce records which Flow versions each Apex test runs in the Tooling API `FlowTestCoverage` object when Apex tests run in the org. All three commands read it, so run your Apex tests before using them.
+- **Run tests with `--code-coverage`.** Without `--code-coverage`, `sf apex run test` skips coverage and Salesforce records no Flow coverage. Check-only deployments (`sf project deploy validate`) don't record it either.
 - **Only Apex counts.** Flow Builder tests and Flow Test Mode (Winter '27) don't count toward the 75% requirement, so `scaffold` generates Apex tests, not Flow test metadata. The coverage source is pluggable, so if Salesforce starts counting Test Mode coverage it can be added without changing the commands.
 
 ## Readiness report
@@ -69,7 +70,7 @@ Pass `--fail-if-not-ready` to exit with code 1 below the threshold.
 Coverage is read from the target org, so in CI:
 
 1. Deploy the branch to a sandbox or scratch org.
-2. Run Apex tests there.
+2. Run Apex tests there with `sf apex run test --code-coverage`.
 3. Run the gate against that org.
 
 The gate checks the Flow's active version in the org (or its latest version if none is active), and prints that version in the result.
@@ -129,7 +130,8 @@ DESCRIPTION
   between --from and --to must be run by at least one Apex test, and optionally reach a minimum element coverage.
 
   Coverage is read from FlowTestCoverage in the target org. Deploy the branch to the target org and run Apex tests there
-  before running the gate. Flows that don't count toward deploy-as-active (screen Flows, inactive Flows) are skipped.
+  with `sf apex run test --code-coverage` before running the gate. Without `--code-coverage`, Salesforce records no Flow
+  coverage. Flows that don't count toward deploy-as-active (screen Flows, inactive Flows) are skipped.
 
   Exits with code 1 when any Flow fails.
 
@@ -179,8 +181,9 @@ DESCRIPTION
   org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and
   the Apex tests that already run each covered Flow.
 
-  FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first (for example, `sf apex run
-  test --test-level RunLocalTests --wait 60`) so the report is current.
+  FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first with coverage turned on (for
+  example, `sf apex run test --test-level RunLocalTests --code-coverage --wait 60`) so the report is current. Without
+  `--code-coverage`, Salesforce records no Flow coverage.
 
 EXAMPLES
   Report readiness for the default org:

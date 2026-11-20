@@ -23,4 +23,4 @@ Commands stay thin. Logic lives in `src/core` where it's unit-tested without an 
 
 - Only Apex tests count toward deploy-as-active coverage. Don't generate Flow test metadata: it needs the Test Mode beta in every target org.
 - Counted process types are in `COUNTED_PROCESS_TYPES` (`src/core/flowTypes.ts`). Screen Flows never count.
-- Coverage comes from Tooling API `FlowTestCoverage`; it's only current after Apex tests run in the org. Say so in any new command's description.
+- Coverage comes from Tooling API `FlowTestCoverage`; it's only recorded when Apex tests run in the org with coverage on (`sf apex run test --code-coverage`). Plain `sf apex run test` and check-only deploys record none. Say so in any new command's description.
