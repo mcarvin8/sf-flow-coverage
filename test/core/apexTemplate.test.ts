@@ -371,6 +371,88 @@ describe('generateApexTest assertions from the Flow', () => {
     expect(test.body).toMatchSnapshot();
   });
 
+  describe('validation rules', () => {
+    const rule = (name: string, formula: string, message?: string) => ({ name, formula, message });
+
+    it('sets fields that keep a rule from blocking the save, and leaves rules it cannot avoid as TODOs', () => {
+      const elements = assign('First', 'Done__c', '<booleanValue>true</booleanValue>');
+      const test = generateApexTest(jobFlow(elements, 'Create', filter('Status__c', 'Closed')), {
+        nullWhenUnset: { Job__c: ['Closed_Date__c', 'Reason__c'] },
+        fieldValues: { Job__c: { Closed_Date__c: 'Date.today()' } },
+        validationRules: {
+          Job__c: [
+            rule('Needs_Date', 'AND(ISPICKVAL(Status__c, "Closed"), ISBLANK(Closed_Date__c))'),
+            rule('Never_Closed', 'ISPICKVAL(Status__c, "Closed")', 'Jobs   cannot be closed.'),
+            rule('Not_Here', 'ISPICKVAL(Status__c, "Draft")'),
+            rule('Unknown', '$Permission.Can_Close'),
+          ],
+        },
+      });
+      expect(test.body).toContain('Closed_Date__c = Date.today()');
+      expect(test.body).toContain('// TODO: validation rule: Never_Closed (Jobs cannot be closed.)');
+      expect(test.body).not.toContain('Not_Here');
+      expect(test.body).not.toContain('Unknown');
+      // A rule certain to block the save means the Flow may not run, so nothing is asserted.
+      expect(test.body).not.toContain('Assert.areEqual(true, result.Done__c');
+    });
+
+    it('checks both the insert and the update of an update test', () => {
+      const test = generateApexTest(
+        jobFlow(
+          assign('First', 'Done__c', '<booleanValue>true</booleanValue>'),
+          'Update',
+          filter('Status__c', 'Closed'),
+        ),
+        {
+          nullWhenUnset: { Job__c: ['Install_Date__c', 'Closed_Date__c'] },
+          requiredFields: { Job__c: { Install_Date__c: 'Date.today().addDays(-1)' } },
+          fieldValues: { Job__c: { Install_Date__c: 'Date.today()', Closed_Date__c: 'Date.today()' } },
+          validationRules: {
+            Job__c: [
+              rule('Not_In_Past_On_Create', 'AND(ISNEW(), Install_Date__c < TODAY())'),
+              rule(
+                'Closed_Needs_Date',
+                'AND(ISCHANGED(Status__c), ISPICKVAL(Status__c, "Closed"), ISBLANK(Closed_Date__c))',
+              ),
+            ],
+          },
+        },
+      );
+      expect(test.body).toContain(
+        '        Job__c testRecord = new Job__c(\n            Install_Date__c = Date.today()\n        );',
+      );
+      expect(test.body).toContain(
+        "testRecord.Status__c = 'Closed';\n        testRecord.Closed_Date__c = Date.today();",
+      );
+      expect(test.body).not.toContain('TODO: validation rule');
+    });
+
+    it('makes parent and input records pass their own rules', () => {
+      const parentTest = generateApexTest(jobFlow(''), {
+        requiredFields: { Job__c: { Account__c: 'null /* TODO */' }, Account: { Name: "'A'" } },
+        lookups: { Job__c: { Account__c: 'Account' } },
+        fieldValues: { Account: { Industry: "'Energy'" } },
+        nullWhenUnset: { Account: ['Industry'] },
+        validationRules: { Account: [rule('Needs_Industry', 'ISBLANK(Industry)')] },
+      });
+      expect(parentTest.body).toContain(
+        "        Account accountParent = new Account(\n            Name = 'A',\n            Industry = 'Energy'\n        );",
+      );
+
+      const inputFlow = parseFlowXml(
+        'Calc',
+        '<Flow><processType>AutoLaunchedFlow</processType><variables><name>job</name><dataType>SObject</dataType><objectType>Job__c</objectType><isInput>true</isInput><isOutput>false</isOutput><isCollection>false</isCollection></variables></Flow>',
+      );
+      const inputTest = generateApexTest(inputFlow, {
+        requiredFields: { Job__c: {} },
+        fieldValues: { Job__c: { Code__c: "'X'" } },
+        nullWhenUnset: { Job__c: ['Code__c'] },
+        validationRules: { Job__c: [rule('Needs_Code', 'ISBLANK(Code__c)')] },
+      });
+      expect(inputTest.body).toContain("Job__c jobInput = new Job__c(\n            Code__c = 'X'\n        );");
+    });
+  });
+
   it('does not assert records of managed package objects, which the package may change or delete', () => {
     const create = (object: string) =>
       `<recordCreates><name>Make_${object.replace(/__/g, '_')}</name><object>${object}</object><inputAssignments><field>Record_Id__c</field><value><elementReference>$Record.Id</elementReference></value></inputAssignments><inputAssignments><field>Start__c</field><value><booleanValue>true</booleanValue></value></inputAssignments><connector><targetReference>Make_Local_c</targetReference></connector></recordCreates>`;

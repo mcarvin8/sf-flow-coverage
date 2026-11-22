@@ -1,4 +1,4 @@
-import { entryCondition, knownOf, negate } from './conditions.js';
+import { conditionFromValidationRule, entryCondition, evaluateCondition, knownOf, negate } from './conditions.js';
 import { type CriteriaPlan, type SolveContext, solveCriteria } from './criteria.js';
 import {
   type FieldState,
@@ -18,6 +18,7 @@ import {
   type RequiredFieldMap,
 } from './requiredFields.js';
 import type { FlowMetadata, FlowVariable } from './types.js';
+import type { ValidationRule } from './validationRules.js';
 
 const MAX_CLASS_NAME = 40;
 const CLASS_SUFFIX = '_FlowTest';
@@ -104,6 +105,8 @@ type CriteriaValues = {
   createOnlyFields: Record<string, string[]>;
   /** Active picklist values per field, per object. */
   picklists: Record<string, Record<string, PicklistInfo>>;
+  /** Active validation rules per object. */
+  validationRules: Record<string, ValidationRule[]>;
 };
 
 /** What the criteria solver knows about the record an insert or an update test builds. */
@@ -144,7 +147,13 @@ function planCriteria(
   required: RequiredFieldMap,
   context: 'insert' | 'update',
 ): CriteriaPlan {
-  const plan = solveCriteria(entryCondition(flow), criteriaContext(object, values, required, context));
+  let plan = solveCriteria(entryCondition(flow), criteriaContext(object, values, required, context));
+  if (context === 'update') {
+    // The insert has to pass the rules too: check it on the values the insert sets.
+    const insert = withValidation({ ...emptyPlan(), set: new Map(plan.prior) }, object, values, required, 'insert');
+    plan = { ...plan, prior: insert.set, unmet: [...plan.unmet, ...insert.unmet] };
+  }
+  plan = withValidation(plan, object, values, required, context);
   for (const [parent, fields] of plan.parents) {
     const known = values.parentFields.get(parent) ?? new Map<string, string>();
     for (const [field, value] of fields) if (!known.has(field)) known.set(field, value);
@@ -154,6 +163,63 @@ function planCriteria(
 }
 
 const criteriaTodos = (plan: CriteriaPlan): string[] => plan.unmet.map((u) => `// TODO: ${u.label}: ${u.text}`);
+
+const emptyPlan = (): CriteriaPlan => ({
+  set: new Map(),
+  prior: new Map(),
+  keep: new Set(),
+  parents: new Map(),
+  unmet: [],
+});
+
+/**
+ * Makes a plan's values pass the object's validation rules for one save. A rule certain not to
+ * fire is left alone. For any other rule, the plan also meets the rule's opposite when it can do
+ * so without new TODOs; a rule certain to block the save that it can't avoid becomes a TODO.
+ */
+function withValidation(
+  plan: CriteriaPlan,
+  object: string,
+  values: CriteriaValues,
+  required: RequiredFieldMap,
+  save: 'insert' | 'update',
+): CriteriaPlan {
+  const rules = values.validationRules[object] ?? [];
+  if (rules.length === 0) return plan;
+  const ctx = criteriaContext(object, values, required, save);
+  const unset = values.unsetValues[object] ?? {};
+  const stateOf = (current: CriteriaPlan): FieldState => {
+    if (save === 'insert') return fieldState(recordFieldValues(object, current.set, required), unset);
+    const inserted = recordFieldValues(object, current.prior, required);
+    const after = new Map([...inserted, ...current.set]);
+    return fieldState(after, unset, new Set(), inserted);
+  };
+  let current = plan;
+  for (const rule of rules) {
+    const condition = conditionFromValidationRule(rule.formula, save);
+    const state = stateOf(current);
+    const blocks = evaluateCondition(condition, { get: (reference) => state.get(reference) });
+    if (blocks === false) continue;
+    const avoided = solveCriteria(negate(condition), ctx, current);
+    if (avoided.unmet.length === current.unmet.length) {
+      current = avoided;
+    } else if (blocks) {
+      const text = rule.message ? `${rule.name} (${rule.message.replace(/\s+/g, ' ')})` : rule.name;
+      current = { ...current, unmet: [...current.unmet, { label: 'validation rule', text }] };
+    }
+  }
+  return current;
+}
+
+/** Fields a record inserted only to support the test (a parent, an input) needs to pass its object's rules. */
+function validInsertFields(
+  object: string,
+  overrides: Map<string, string>,
+  values: CriteriaValues,
+  required: RequiredFieldMap,
+): Map<string, string> {
+  return withValidation({ ...emptyPlan(), set: new Map(overrides) }, object, values, required, 'insert').set;
+}
 
 /** Described required fields win over the built-in list for standard objects. */
 function knownRequired(object: string, required: RequiredFieldMap): Record<string, string> | undefined {
@@ -602,6 +668,7 @@ function interviewMethod(
   required: RequiredFieldMap,
   walkOutputs = false,
   lookups: Record<string, Record<string, string>> = {},
+  validate: (object: string, overrides: Map<string, string>) => Map<string, string> = (_, overrides) => overrides,
 ): string[] {
   const i2 = INDENT.repeat(2);
   const lines = [`${INDENT}@IsTest`, `${INDENT}static void ${name}() {`, ...notes.map((n) => `${i2}// ${n}`)];
@@ -610,7 +677,13 @@ function interviewMethod(
     if (variable.dataType === 'SObject' && variable.objectType && !variable.isCollection) {
       const local = `${camel(variable.name) || 'input'}Input`;
       lines.push(
-        ...newRecord(variable.objectType, local, recordFields(variable.objectType, new Map(), required), i2, required),
+        ...newRecord(
+          variable.objectType,
+          local,
+          recordFields(variable.objectType, validate(variable.objectType, new Map()), required),
+          i2,
+          required,
+        ),
       );
       lines.push(`${i2}insert ${local};`);
       // A record from DML only holds the fields the test set; query the ones the Flow reads.
@@ -634,7 +707,7 @@ function interviewMethod(
       } else if (canInsertParent(object) && knownRequired(object, required)) {
         const local = `${camel(variable.name) || 'input'}Record`;
         lines.push(
-          ...newRecord(object, local, recordFields(object, new Map(), required), i2, required),
+          ...newRecord(object, local, recordFields(object, validate(object, new Map()), required), i2, required),
           `${i2}insert ${local};`,
           `${i2}inputs.put('${key}', ${local}.Id);`,
         );
@@ -769,6 +842,8 @@ export type GenerateOptions = {
   createOnlyFields?: Record<string, string[]>;
   /** Active picklist values per field, per object. Criteria values are spelled to match, and restricted picklists only get their own values. */
   picklists?: Record<string, Record<string, PicklistInfo>>;
+  /** Active validation rules per object. Generated records meet them where the generator can. */
+  validationRules?: Record<string, ValidationRule[]>;
 };
 
 type ResolvedLookups = {
@@ -828,6 +903,7 @@ function withParentInserts(
   required: RequiredFieldMap,
   original: RequiredFieldMap,
   parentFields: Map<string, Map<string, string>>,
+  validate: (object: string, overrides: Map<string, string>) => Map<string, string> = (_, overrides) => overrides,
 ): string[] {
   if (parents.size === 0) return lines;
   const i2 = INDENT.repeat(2);
@@ -841,7 +917,7 @@ function withParentInserts(
       if (done.has(variable)) return;
       const object = parents.get(variable) as string;
       const here = [...chain, variable];
-      const fields = recordFieldValues(object, parentFields.get(object) ?? new Map(), required);
+      const fields = recordFieldValues(object, validate(object, parentFields.get(object) ?? new Map()), required);
       for (const [field, value] of fields) {
         const refs = referenced(value);
         if (refs.some((r) => here.includes(r)) || (refs.length > 0 && here.length >= MAX_PARENT_DEPTH)) {
@@ -911,6 +987,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     readOnlyFields: options.readOnlyFields ?? {},
     createOnlyFields: options.createOnlyFields ?? {},
     picklists: options.picklists ?? {},
+    validationRules: options.validationRules ?? {},
   };
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);
@@ -942,7 +1019,9 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
       break;
     case 'autolaunched':
       description = 'Autolaunched (no trigger).';
-      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {});
+      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {}, (object, overrides) =>
+        validInsertFields(object, overrides, values, required),
+      );
       break;
     default:
       description = `Process type ${flow.processType ?? 'unknown'}.`;
@@ -951,7 +1030,14 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
 
   if (methods.some((line) => line.includes('defaultRecordTypeId(')))
     methods = [...methods, '', ...DEFAULT_RECORD_TYPE_HELPER];
-  methods = withParentInserts(methods, lookups.parents, required, options.requiredFields ?? {}, values.parentFields);
+  methods = withParentInserts(
+    methods,
+    lookups.parents,
+    required,
+    options.requiredFields ?? {},
+    values.parentFields,
+    (object, overrides) => validInsertFields(object, overrides, values, required),
+  );
   const body = [...header(flow, description), `private class ${className} {`, ...methods, '}', ''].join('\n');
   return { className, body, kind };
 }

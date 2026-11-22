@@ -15,6 +15,7 @@ import {
   type ObjectFields,
 } from './requiredFields.js';
 import type { FlowMetadata, ScaffoldResult } from './types.js';
+import type { ReadValidationRules, ValidationRule } from './validationRules.js';
 
 export const DEFAULT_APEX_API_VERSION = '65.0';
 
@@ -30,6 +31,8 @@ export type ScaffoldOptions = {
   dryRun?: boolean;
   /** Describes sObjects in the org so generated records set their required fields. */
   describe?: DescribeObject;
+  /** Reads each object's active validation rules, so generated records meet them where they can. */
+  validationRules?: ReadValidationRules;
 };
 
 /** sObjects a generated test creates records of. */
@@ -168,8 +171,17 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     }
   }
 
+  const validationRules: Record<string, ValidationRule[]> = {};
+  if (options.validationRules) {
+    // Sequential on purpose: one Tooling API query per object, then one per rule.
+    for (const object of Object.keys(objectFields.requiredFields)) {
+      const rules = await options.validationRules(object);
+      if (rules.length > 0) validationRules[object] = rules;
+    }
+  }
+
   for (const { flowName, flow } of flows) {
-    const test = generateApexTest(flow, objectFields);
+    const test = generateApexTest(flow, { ...objectFields, validationRules });
     const classPath = join(outputDir, `${test.className}.cls`);
     if (!options.force && (await exists(classPath))) {
       result.skipped.push({ flowName, reason: `${classPath} already exists. Use --force to overwrite.` });

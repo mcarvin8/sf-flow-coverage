@@ -5,6 +5,7 @@ import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
 import { scaffoldTests } from '../../core/scaffold.js';
 import { describeObject, toolingQuery } from '../../core/toolingQuery.js';
 import type { ScaffoldResult } from '../../core/types.js';
+import { validationRuleReader } from '../../core/validationRules.js';
 
 Messages.importMessagesDirectoryFromMetaUrl(import.meta.url);
 const messages = Messages.loadMessages('sf-flow-coverage', 'flowcov.scaffold');
@@ -68,6 +69,7 @@ export default class FlowcovScaffold extends SfCommand<ScaffoldResult> {
       force: flags.force,
       dryRun: flags['dry-run'],
       describe: connection ? describeObject(connection) : undefined,
+      validationRules: connection ? validationRuleReader(toolingQuery(connection)) : undefined,
     });
 
     const verb = flags['dry-run'] ? 'Would create' : 'Created';
