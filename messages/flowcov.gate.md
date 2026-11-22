@@ -32,9 +32,9 @@ Exits with code 1 when any Flow fails.
 
   <%= config.bin %> <%= command.id %> --target-org ci-sandbox --from origin/main --content-check fail
 
-- Skip legacy Flows, and add the results to a GitHub Actions job summary:
+- Skip legacy Flows, and print the results as Markdown for a pull request comment or job summary:
 
-  <%= config.bin %> <%= command.id %> --target-org ci-sandbox --from origin/main --exclude "Legacy_*" --output-format markdown >> "$GITHUB_STEP_SUMMARY"
+  <%= config.bin %> <%= command.id %> --target-org ci-sandbox --from origin/main --exclude "Legacy_*" --output-format markdown
 
 - Check named Flows without git:
 
