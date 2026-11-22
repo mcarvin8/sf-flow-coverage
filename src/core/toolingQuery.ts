@@ -22,8 +22,8 @@ export function dataQuery(connection: Pick<Connection, 'query'>): DataQuery {
 
 /** Adapts an org connection to the MetadataRead used to read org settings. */
 export function metadataRead(connection: Pick<Connection, 'metadata'>): MetadataRead {
-  return async (type: string, fullName: string): Promise<unknown> =>
-    connection.metadata.read(type as Parameters<Connection['metadata']['read']>[0], fullName);
+  return async (type: string, fullName: string | string[]): Promise<unknown> =>
+    connection.metadata.read(type as Parameters<Connection['metadata']['read']>[0], fullName as string);
 }
 
 /** Adapts an org connection to the DescribeObject used by scaffolding to fill required fields. */

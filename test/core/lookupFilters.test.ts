@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { type Condition, type Operand } from '../../src/core/conditions.js';
 import { conditionFromLookupFilter, type LookupFilter, lookupFilterReader } from '../../src/core/lookupFilters.js';
-import type { ToolingQuery } from '../../src/core/types.js';
 
 function show(condition: Condition): string {
   const side = (o: Operand): string =>
@@ -82,94 +81,95 @@ describe('conditionFromLookupFilter', () => {
 });
 
 describe('lookupFilterReader', () => {
-  const reader = (answer: (soql: string) => Array<Record<string, unknown>> | Error) => {
-    const calls: string[] = [];
-    const query = (async (soql: string) => {
-      calls.push(soql);
-      const result = answer(soql);
-      if (result instanceof Error) throw result;
-      return result;
-    }) as ToolingQuery;
-    return { read: lookupFilterReader(query), calls };
+  /** A Metadata API read that answers from a map of full names, recording each call. */
+  const reader = (records: Record<string, unknown>, fail = false) => {
+    const calls: Array<[string, string[]]> = [];
+    const read = async (type: string, fullNames: string | string[]) => {
+      const names = ([] as string[]).concat(fullNames);
+      calls.push([type, names]);
+      if (fail) throw new Error('INSUFFICIENT_ACCESS');
+      // One component comes back as the record itself; several as a list. Unknown ones are empty.
+      const found = names.map((name) => records[name] ?? {});
+      return found.length === 1 ? found[0] : found;
+    };
+    return { read: lookupFilterReader(read), calls };
   };
 
-  it('reads required filters on custom lookups from their field metadata', async () => {
-    const { read, calls } = reader((soql) => {
-      if (soql.includes('FROM EntityDefinition')) return [{ DurableId: '01I1' }];
-      if (soql.includes("DeveloperName = 'Account'")) return [{ Id: '00N1' }];
-      if (soql.includes("DeveloperName = 'Site' AND NamespacePrefix = 'ns'")) return [{ Id: '00N2' }];
-      if (soql.includes("DeveloperName = 'Optional'")) return [{ Id: '00N3' }];
-      if (soql.includes("DeveloperName = 'Missing'")) return [];
-      if (soql.includes("Id = '00N1'")) {
-        return [
-          {
-            Metadata: {
-              lookupFilter: {
-                active: true,
-                isOptional: false,
-                booleanFilter: '1 OR 2',
-                errorMessage: 'Pick a customer.',
-                filterItems: [
-                  { field: 'Account.Type', operation: 'equals', value: 'Customer', valueField: null },
-                  { field: 'Account.Rating' },
-                ],
-              },
-            },
-          },
-        ];
-      }
-      if (soql.includes("Id = '00N2'")) {
-        return [
-          {
-            Metadata: {
-              lookupFilter: {
-                active: true,
-                filterItems: [{ field: '$Source.A__c', operation: 'equals', valueField: '$User.Id' }],
-              },
-            },
-          },
-        ];
-      }
-      if (soql.includes("Id = '00N3'"))
-        return [{ Metadata: { lookupFilter: { active: true, isOptional: true, filterItems: [] } } }];
-      return new Error('unexpected');
+  it('reads required filters on standard and custom lookups from their field metadata', async () => {
+    const { read, calls } = reader({
+      'Contact.AccountId': {
+        fullName: 'Contact.AccountId',
+        lookupFilter: {
+          active: 'true',
+          isOptional: 'false',
+          booleanFilter: '1 OR 2',
+          errorMessage: 'Pick a customer.',
+          filterItems: [
+            { field: 'Account.Type', operation: 'equals', value: 'Customer', valueField: null },
+            { field: 'Account.Rating' },
+          ],
+        },
+      },
+      'Contact.ns__Site__c': {
+        fullName: 'Contact.ns__Site__c',
+        // A single filter item comes back as the item itself, not a list.
+        lookupFilter: {
+          active: true,
+          filterItems: { field: '$Source.A__c', operation: 'equals', valueField: '$User.Id' },
+        },
+      },
+      'Contact.Optional__c': { fullName: 'Contact.Optional__c', lookupFilter: { active: true, isOptional: true } },
+      'Contact.Inactive__c': { fullName: 'Contact.Inactive__c', lookupFilter: { active: 'false' } },
+      'Contact.Plain__c': { fullName: 'Contact.Plain__c', lookupFilter: null },
     });
     expect(
-      await read('Job__c', ['Account__c', 'ns__Site__c', 'Optional__c', 'Missing__c', 'OwnerId', 'Broken__c']),
+      await read('Contact', ['AccountId', 'ns__Site__c', 'Optional__c', 'Inactive__c', 'Plain__c', 'Missing__c']),
     ).toEqual([
       {
-        lookup: 'Account__c',
+        lookup: 'AccountId',
         items: [{ field: 'Account.Type', operation: 'equals', value: 'Customer' }],
         booleanFilter: '1 OR 2',
         errorMessage: 'Pick a customer.',
       },
       { lookup: 'ns__Site__c', items: [{ field: '$Source.A__c', operation: 'equals', valueField: '$User.Id' }] },
     ]);
-    expect(calls[0]).toBe("SELECT DurableId FROM EntityDefinition WHERE QualifiedApiName = 'Job__c'");
-    expect(calls[1]).toBe("SELECT Id FROM CustomField WHERE TableEnumOrId = '01I1' AND DeveloperName = 'Account'");
+    expect(calls).toEqual([
+      [
+        'CustomField',
+        [
+          'Contact.AccountId',
+          'Contact.ns__Site__c',
+          'Contact.Optional__c',
+          'Contact.Inactive__c',
+          'Contact.Plain__c',
+          'Contact.Missing__c',
+        ],
+      ],
+    ]);
   });
 
-  it('reads nothing for standard lookups or an object it cannot find', async () => {
-    const none = reader(() => new Error('should not query'));
-    expect(await none.read('Job__c', ['OwnerId'])).toEqual([]);
-    expect(none.calls).toEqual([]);
-    expect(await reader(() => []).read('Job__c', ['Account__c'])).toEqual([]);
-    expect(await reader(() => new Error('no access')).read('Job__c', ['Account__c'])).toEqual([]);
-    const inactive = reader((soql) =>
-      soql.includes('EntityDefinition')
-        ? [{ DurableId: '01I1' }]
-        : soql.includes('SELECT Id FROM')
-          ? [{ Id: '00N1' }]
-          : [{ Metadata: { lookupFilter: { active: false, filterItems: [] } } }],
-    );
-    expect(await inactive.read('Job__c', ['Account__c'])).toEqual([]);
-    const noFilter = reader((soql) =>
-      soql.includes('EntityDefinition')
-        ? [{ DurableId: '01I1' }]
-        : soql.includes('SELECT Id FROM')
-          ? [{ Id: '00N1' }]
-          : [{ Metadata: {} }],
-    );
-    expect(await noFilter.read('Job__c', ['Account__c'])).toEqual([]);
+  it('reads ten fields per call, handles a single result, and skips calls that fail', async () => {
+    const fields = Array.from({ length: 12 }, (_, i) => `F${i}__c`);
+    const many = reader({});
+    expect(await many.read('Job__c', fields)).toEqual([]);
+    expect(many.calls.map(([, names]) => names.length)).toEqual([10, 2]);
+
+    const one = reader({
+      'Job__c.Account__c': {
+        fullName: 'Job__c.Account__c',
+        lookupFilter: { filterItems: { field: 'Account.Type', operation: 'equals', value: 'X' } },
+      },
+    });
+    expect(await one.read('Job__c', ['Account__c'])).toEqual([
+      { lookup: 'Account__c', items: [{ field: 'Account.Type', operation: 'equals', value: 'X' }] },
+    ]);
+
+    expect(await reader({}, true).read('Job__c', ['Account__c'])).toEqual([]);
+    expect(await reader({}).read('Job__c', [])).toEqual([]);
+    // A record for another field is ignored.
+    const stray = reader({
+      'Job__c.Account__c': { fullName: 'Other__c.Account__c', lookupFilter: { filterItems: [] } },
+    });
+    expect(await stray.read('Job__c', ['Account__c'])).toEqual([]);
   });
 });

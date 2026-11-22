@@ -1,6 +1,6 @@
 import { type Condition, type ConditionOperator, type Operand, operandOf, parseLogic } from './conditions.js';
+import type { MetadataRead } from './flowSettings.js';
 import { escapeApexString } from './flowValues.js';
-import type { ToolingQuery } from './types.js';
 
 /** One criterion of a lookup filter, as the field's metadata stores it. */
 export type LookupFilterItem = {
@@ -22,78 +22,82 @@ export type LookupFilter = {
   errorMessage?: string;
 };
 
-/** Reads the required lookup filters on the given custom lookup fields of an object. */
+/** Reads the required lookup filters on the given lookup fields of an object, standard or custom. */
 export type ReadLookupFilters = (object: string, lookups: string[]) => Promise<LookupFilter[]>;
 
-const quote = (value: string): string => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
-
 type FilterMetadata = {
-  active?: boolean;
-  isOptional?: boolean;
+  active?: boolean | string;
+  isOptional?: boolean | string;
   booleanFilter?: string | null;
   errorMessage?: string | null;
-  filterItems?: Array<{ field?: string; operation?: string; value?: string | null; valueField?: string | null }>;
+  filterItems?: FilterItemMetadata | FilterItemMetadata[];
 };
 
+type FilterItemMetadata = { field?: string; operation?: string; value?: string | null; valueField?: string | null };
+
+/** The Metadata API reads up to 10 components per call. */
+const BATCH = 10;
+
+/** The Metadata API returns booleans as `true` or `"true"`. */
+const isTrue = (value: unknown): boolean => value === true || value === 'true';
+
+/** The Metadata API returns a list of one as the item itself. */
+const list = <T>(value: T | T[] | undefined | null): T[] =>
+  value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
+
+function toFilter(lookup: string, filter: FilterMetadata | null | undefined): LookupFilter | undefined {
+  if (!filter || filter.active === false || filter.active === 'false' || isTrue(filter.isOptional)) return undefined;
+  return {
+    lookup,
+    items: list(filter.filterItems).flatMap((item) =>
+      item.field && item.operation
+        ? [
+            {
+              field: item.field,
+              operation: item.operation,
+              ...(item.value ? { value: item.value } : {}),
+              ...(item.valueField ? { valueField: item.valueField } : {}),
+            },
+          ]
+        : [],
+    ),
+    ...(filter.booleanFilter ? { booleanFilter: filter.booleanFilter } : {}),
+    ...(filter.errorMessage ? { errorMessage: filter.errorMessage } : {}),
+  };
+}
+
 /**
- * Reads lookup filters through the Tooling API: a filter's criteria are only in its field's
- * `CustomField` metadata, which the Tooling API returns one row at a time. Standard lookup
- * fields have no `CustomField` record, so only custom lookups (`__c`) are read.
+ * Reads lookup filters through the Metadata API, which returns a field's `lookupFilter` for
+ * standard lookups (`Contact.AccountId`) as well as custom ones, ten fields per call.
  */
-export function lookupFilterReader(query: ToolingQuery): ReadLookupFilters {
+export function lookupFilterReader(read: MetadataRead): ReadLookupFilters {
   return async (object, lookups) => {
-    const custom = lookups.filter((field) => field.endsWith('__c'));
-    if (custom.length === 0) return [];
-    let tableId: string | undefined;
-    try {
-      const [entity] = await query<{ DurableId?: string }>(
-        `SELECT DurableId FROM EntityDefinition WHERE QualifiedApiName = ${quote(object)}`,
-      );
-      tableId = entity?.DurableId;
-    } catch {
-      return [];
-    }
-    if (!tableId) return [];
     const filters: LookupFilter[] = [];
-    for (const lookup of custom) {
-      // `ns__Field__c` is DeveloperName `Field` in namespace `ns`.
-      const parts = lookup.replace(/__c$/, '').split('__');
-      const developerName = parts.pop() as string;
-      const namespace = parts[0];
+    for (let i = 0; i < lookups.length; i += BATCH) {
+      const batch = lookups.slice(i, i + BATCH);
+      let result: unknown;
       try {
-        const [field] = await query<{ Id: string }>(
-          `SELECT Id FROM CustomField WHERE TableEnumOrId = ${quote(tableId)} AND DeveloperName = ${quote(developerName)}${namespace ? ` AND NamespacePrefix = ${quote(namespace)}` : ''}`,
+        result = await read(
+          'CustomField',
+          batch.map((field) => `${object}.${field}`),
         );
-        if (!field) continue;
-        const [record] = await query<{ Metadata?: { lookupFilter?: FilterMetadata | null } }>(
-          `SELECT Metadata FROM CustomField WHERE Id = ${quote(field.Id)}`,
-        );
-        const filter = record?.Metadata?.lookupFilter;
-        if (!filter || filter.active === false || filter.isOptional) continue;
-        filters.push({
-          lookup,
-          items: (filter.filterItems ?? []).flatMap((item) =>
-            item.field && item.operation
-              ? [
-                  {
-                    field: item.field,
-                    operation: item.operation,
-                    ...(item.value ? { value: item.value } : {}),
-                    ...(item.valueField ? { valueField: item.valueField } : {}),
-                  },
-                ]
-              : [],
-          ),
-          ...(filter.booleanFilter ? { booleanFilter: filter.booleanFilter } : {}),
-          ...(filter.errorMessage ? { errorMessage: filter.errorMessage } : {}),
-        });
       } catch {
-        // A field whose filter can't be read is left out.
+        continue;
+      }
+      // A field that doesn't exist comes back as an empty record, without a fullName.
+      for (const record of list(result as RecordMetadata | RecordMetadata[])) {
+        const lookup = record?.fullName?.startsWith(`${object}.`)
+          ? record.fullName.slice(object.length + 1)
+          : undefined;
+        const filter = lookup && batch.includes(lookup) ? toFilter(lookup, record.lookupFilter) : undefined;
+        if (filter) filters.push(filter);
       }
     }
     return filters;
   };
 }
+
+type RecordMetadata = { fullName?: string; lookupFilter?: FilterMetadata | null };
 
 const OPERATIONS: Record<string, ConditionOperator> = {
   equals: 'EqualTo',
