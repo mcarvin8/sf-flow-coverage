@@ -22,10 +22,10 @@ Done: `readiness` reads `FlowSettings.enableFlowDeployAsActiveEnabled` and `Orga
 
 ### 4. More entry-criteria formulas
 
-Entry criteria go through one condition engine: `AND`/`OR`/`NOT`/`IF`, comparisons with literals, other fields, `$User.Id`, and date functions, `$Record__Prior`, and fields one relationship away. Still left as TODOs:
+Entry criteria go through one condition engine: `AND`/`OR`/`NOT`/`IF`/`CASE`, comparisons with literals, other fields, `$User.Id`, and date functions, `$Record__Prior`, `TEXT`/`LEN`/`UPPER`/`LOWER`/`TRIM`/`VALUE` of a field, and fields up to three relationships away. Still left as TODOs:
 
-- Functions on fields, such as `LEN({!$Record.Name}) > 3` or `TEXT(...)`, and `CASE`.
-- Fields more than one relationship away (`{!$Record.Account__r.Owner.Name}`).
+- Functions of functions (`LEN(TRIM({!$Record.Name}))`), functions of several fields, and `TEXT()` of a number field compared with digits.
+- Related fields on users (`{!$Record.Owner.Name}`), and paths through the same object twice (`Account.Parent.Type`), since a test inserts one record per parent object.
 
 ### 5. More filter operators
 

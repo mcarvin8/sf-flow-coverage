@@ -128,6 +128,10 @@ function criteriaContext(
     relationships: values.relationships[object] ?? {},
     lookups: values.lookups[object] ?? {},
     parentFieldValues: (parent) => values.fieldValues[parent] ?? {},
+    parentLinks: (parent) => ({
+      relationships: values.relationships[parent] ?? {},
+      lookups: values.lookups[parent] ?? {},
+    }),
     normalize: (target, field, apex) => {
       const picklist = values.picklists[target]?.[field];
       const known = knownOf(apex);

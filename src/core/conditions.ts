@@ -2,10 +2,17 @@ import type { FlowValue } from './flowValues.js';
 import { type Expr, formulaToApex, parseFormula } from './formula.js';
 import type { FlowFilter, FlowMetadata } from './types.js';
 
+/** Formula functions of one field that a test can meet by choosing the field's value. */
+export const FIELD_FUNCTIONS = ['TEXT', 'LEN', 'UPPER', 'LOWER', 'TRIM', 'VALUE'] as const;
+export type FieldFunction = (typeof FIELD_FUNCTIONS)[number];
+
 /** One side of a condition. */
 export type Operand =
-  /** A field of the triggering record (`path` like `['Status__c']` or `['Account', 'Type']`), or its prior value. */
-  | { kind: 'field'; path: string[]; prior: boolean }
+  /**
+   * A field of the triggering record (`path` like `['Status__c']` or `['Account', 'Type']`), or
+   * its prior value, optionally through a function such as `LEN`.
+   */
+  | { kind: 'field'; path: string[]; prior: boolean; fn?: FieldFunction }
   /** An Apex expression for a value: a literal, `Date.today()`, and so on. */
   | { kind: 'value'; apex: string }
   /** `$User.Id`: the running user. */
@@ -207,8 +214,56 @@ export function formulaOperand(expr: Expr): Operand {
     const field = operandOf(expr.args[0].path);
     if (field.kind === 'field') return { ...field, prior: true };
   }
+  if (expr.kind === 'call' && expr.args.length === 1 && (FIELD_FUNCTIONS as readonly string[]).includes(expr.name)) {
+    const inner = formulaOperand(expr.args[0]);
+    if (inner.kind === 'field' && !inner.fn) return { ...inner, fn: expr.name as FieldFunction };
+  }
   const apex = formulaToApex(expr);
   return apex === undefined ? { kind: 'expr', expr } : { kind: 'value', apex };
+}
+
+/**
+ * `CASE(value, match1, result1, ..., else)` as one branch per match (`value = match1` and the
+ * result's condition), plus the else branch (no match and the else result's condition).
+ * Undefined when the arguments don't have that shape.
+ */
+function caseBranches(
+  expr: Extract<Expr, { kind: 'call' }>,
+  label: ConditionLabel,
+  resultCondition: (result: Expr) => Condition,
+): Condition | undefined {
+  const [value, ...rest] = expr.args;
+  if (!value || rest.length < 3 || rest.length % 2 === 0) return undefined;
+  const matches: Condition[] = [];
+  const branches: Condition[] = [];
+  for (let i = 0; i + 1 < rest.length; i += 2) {
+    const match = formulaCondition({ kind: 'binary', op: '=', left: value, right: rest[i], text: expr.text }, label);
+    matches.push(match);
+    branches.push(and([match, resultCondition(rest[i + 1])]));
+  }
+  branches.push(and([...matches.map((match) => negate(match)), resultCondition(rest[rest.length - 1])]));
+  return or(branches);
+}
+
+/**
+ * A comparison with an `IF` or `CASE` on one side, as one branch per result:
+ * `IF(test, a, b) > 5` is `(test and a > 5) or (not test and b > 5)`.
+ */
+function branchComparison(expr: Extract<Expr, { kind: 'binary' }>, label: ConditionLabel): Condition | undefined {
+  const branchy = (e: Expr): e is Extract<Expr, { kind: 'call' }> =>
+    e.kind === 'call' && ((e.name === 'IF' && e.args.length === 3) || e.name === 'CASE');
+  const onLeft = branchy(expr.left);
+  if (!onLeft && !branchy(expr.right)) return undefined;
+  const call = (onLeft ? expr.left : expr.right) as Extract<Expr, { kind: 'call' }>;
+  const compared = (result: Expr): Condition =>
+    formulaCondition(
+      { ...expr, left: onLeft ? result : expr.left, right: onLeft ? expr.right : result, text: expr.text },
+      label,
+    );
+  if (call.name === 'CASE') return caseBranches(call, label, compared);
+  const [test, yes, no] = call.args;
+  const condition = formulaCondition(test, label);
+  return or([and([condition, compared(yes)]), and([{ kind: 'not', item: condition }, compared(no)])]);
 }
 
 /** Converts a boolean formula into a condition. Parts it can't read become opaque terms. */
@@ -236,7 +291,14 @@ function formulaCondition(expr: Expr, label: ConditionLabel): Condition {
       }
       let op = COMPARISONS[expr.op];
       if (!op) return opaque;
+      const branched = branchComparison(expr, label);
+      if (branched) return branched;
       let [left, right] = [formulaOperand(expr.left), formulaOperand(expr.right)];
+      if (left.kind === 'value' && right.kind === 'value') {
+        // Two constants, such as a CASE branch's result compared with the value it should be.
+        const constant = compare(knownOf(left.apex), op, knownOf(right.apex));
+        if (constant !== undefined) return constant ? TRUE : { kind: 'or', items: [] };
+      }
       if ((op === 'EqualTo' || op === 'NotEqualTo') && (expr.right.kind === 'null' || expr.left.kind === 'null')) {
         const side = expr.right.kind === 'null' ? left : right;
         return atom(side, 'IsNull', BOOLEAN(op === 'EqualTo'));
@@ -261,6 +323,8 @@ function formulaCondition(expr: Expr, label: ConditionLabel): Condition {
           const [test, yes, no] = args.map((a) => formulaCondition(a, label));
           return or([and([test, yes]), and([{ kind: 'not', item: test }, no])]);
         }
+        case 'CASE':
+          return caseBranches(expr, label, (result) => formulaCondition(result, label)) ?? opaque;
         case 'ISPICKVAL':
           return args.length === 2 ? atom(formulaOperand(args[0]), 'EqualTo', formulaOperand(args[1])) : opaque;
         case 'ISBLANK':
@@ -420,10 +484,37 @@ export function knownOf(apex: string | null): Known {
   return { kind: 'set' };
 }
 
+/** Text that is empty reads as blank, as Salesforce formulas treat it. */
+const textValue = (value: string): Known => (value === '' ? { kind: 'null' } : { kind: 'string', value });
+
+/** What a field function returns for a value. Undefined when it isn't known. */
+export function applyFieldFunction(fn: FieldFunction, value: Known | undefined): Known | undefined {
+  if (!value) return undefined;
+  switch (fn) {
+    case 'LEN':
+      if (value.kind === 'null') return { kind: 'number', value: 0 };
+      return value.kind === 'string' ? { kind: 'number', value: value.value.length } : undefined;
+    case 'VALUE':
+      if (value.kind !== 'string' || !/^\s*-?\d+(\.\d+)?\s*$/.test(value.value)) return undefined;
+      return { kind: 'number', value: Number(value.value) };
+    case 'TEXT':
+      if (value.kind === 'number' || value.kind === 'boolean') return { kind: 'string', value: String(value.value) };
+      return value.kind === 'string' || value.kind === 'null' ? value : undefined;
+    default: {
+      if (value.kind === 'null') return value;
+      if (value.kind !== 'string') return undefined;
+      const text =
+        fn === 'UPPER' ? value.value.toUpperCase() : fn === 'LOWER' ? value.value.toLowerCase() : value.value.trim();
+      return textValue(text);
+    }
+  }
+}
+
 const fieldKey = (path: string[], prior: boolean): string =>
   `${prior ? '$Record__Prior' : '$Record'}.${path.join('.')}`;
 
-function compare(left: Known | undefined, op: ConditionOperator, right: Known | undefined): boolean | undefined {
+/** Compares two values: undefined when what is known does not settle it. */
+export function compare(left: Known | undefined, op: ConditionOperator, right: Known | undefined): boolean | undefined {
   if (!left || !right) return undefined;
   if (op === 'EqualTo' || op === 'NotEqualTo') {
     let equal: boolean | undefined;
@@ -546,10 +637,22 @@ export function evaluateExpr(expr: Expr, env: EvaluationEnv, depth = 0): Known |
           if (!value) return undefined;
           return value.kind === 'null' ? sub(args[1]) : value;
         }
-        case 'TEXT': {
+        case 'TEXT':
+        case 'LEN':
+        case 'UPPER':
+        case 'LOWER':
+        case 'TRIM':
+        case 'VALUE':
+          return args.length === 1 ? applyFieldFunction(expr.name as FieldFunction, sub(args[0])) : undefined;
+        case 'CASE': {
+          if (args.length < 4 || args.length % 2 !== 0) return undefined;
           const value = sub(args[0]);
-          if (value?.kind === 'number') return { kind: 'string', value: String(value.value) };
-          return value?.kind === 'string' || value?.kind === 'null' ? value : undefined;
+          for (let i = 1; i + 1 < args.length; i += 2) {
+            const match = compare(value, 'EqualTo', sub(args[i]));
+            if (match === undefined) return undefined;
+            if (match) return sub(args[i + 1]);
+          }
+          return sub(args[args.length - 1]);
         }
         case 'PRIORVALUE':
           return operandValue(formulaOperand(expr), env, depth + 1);
@@ -568,7 +671,8 @@ function operandValue(operand: Operand, env: EvaluationEnv, depth = 0): Known | 
   switch (operand.kind) {
     case 'field': {
       const value = env.get(fieldKey(operand.path, operand.prior));
-      return value === undefined ? undefined : knownOf(value);
+      if (value === undefined) return undefined;
+      return operand.fn ? applyFieldFunction(operand.fn, knownOf(value)) : knownOf(value);
     }
     case 'value':
       return knownOf(operand.apex);
@@ -608,7 +712,7 @@ export function evaluateCondition(condition: Condition, env: EvaluationEnv): boo
         return (left.kind === 'null') === wanted;
       }
       if (condition.op === 'IsChanged') {
-        if (condition.left.kind !== 'field' || wanted === undefined) return undefined;
+        if (condition.left.kind !== 'field' || condition.left.fn || wanted === undefined) return undefined;
         const before = operandValue({ ...condition.left, prior: true }, env);
         const changed = compare(before, 'NotEqualTo', left);
         return changed === undefined ? undefined : changed === wanted;
