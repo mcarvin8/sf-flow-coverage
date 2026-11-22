@@ -35,7 +35,8 @@ export type ConditionLabel =
   | 'entry criteria formula term'
   | 'entry criteria logic'
   | 'decision'
-  | 'validation rule';
+  | 'validation rule'
+  | 'lookup filter';
 
 export type Atom = {
   kind: 'atom';
@@ -110,7 +111,7 @@ function flowAtom(
 }
 
 /** Reads custom filter logic such as `1 AND (2 OR NOT 3)`. Undefined when it can't. */
-function parseLogic(logic: string, conditions: Condition[]): Condition | undefined {
+export function parseLogic(logic: string, conditions: Condition[]): Condition | undefined {
   const tokens = logic.match(/\d+|AND|OR|NOT|\(|\)/gi);
   if (!tokens || tokens.join('').length !== logic.replace(/\s+/g, '').length) return undefined;
   let position = 0;

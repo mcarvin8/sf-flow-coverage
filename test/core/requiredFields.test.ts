@@ -114,6 +114,7 @@ describe('loadObjectFields', () => {
       readOnlyFields: { Installation__c: [] },
       createOnlyFields: { Installation__c: [] },
       picklists: { Installation__c: {} },
+      filteredLookups: { Installation__c: [] },
     });
   });
 
@@ -127,6 +128,15 @@ describe('loadObjectFields', () => {
     ]);
     expect(map.readOnlyFields).toEqual({ Job__c: ['Region_Name__c', 'Number__c'] });
     expect(map.createOnlyFields).toEqual({ Job__c: ['Project__c'] });
+  });
+
+  it('records lookups with a required lookup filter', async () => {
+    const map = await loadObjectFields(['Job__c'], async () => [
+      field('Account__c', 'reference', { referenceTo: ['Account'], filteredLookupInfo: { optionalFilter: false } }),
+      field('Site__c', 'reference', { referenceTo: ['Site__c'], filteredLookupInfo: { optionalFilter: true } }),
+      field('Other__c', 'reference', { referenceTo: ['Other__c'], filteredLookupInfo: null }),
+    ]);
+    expect(map.filteredLookups).toEqual({ Job__c: ['Account__c'] });
   });
 
   it('adds to earlier results without describing an object twice', async () => {

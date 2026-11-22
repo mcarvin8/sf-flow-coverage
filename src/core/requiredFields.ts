@@ -20,6 +20,8 @@ export type DescribeField = {
   restrictedPicklist?: boolean;
   /** The field's default value, such as a checkbox's `true` or `false`. */
   defaultValue?: unknown;
+  /** Set for lookups with a lookup filter; `optionalFilter` is true when the filter only warns. */
+  filteredLookupInfo?: { optionalFilter?: boolean } | null;
   /** For lookups, the relationship name used in paths such as `Account__r.Type`. */
   relationshipName?: string | null;
 };
@@ -194,6 +196,8 @@ export type ObjectFields = {
   createOnlyFields: Record<string, string[]>;
   /** Active picklist values per picklist field, per object, and whether the picklist rejects others. */
   picklists: Record<string, Record<string, PicklistInfo>>;
+  /** Lookup fields with a required lookup filter, per object. */
+  filteredLookups: Record<string, string[]>;
   /** What a new record holds in each field a test doesn't set, per object (see `unsetFieldValues`). */
   unsetValues: Record<string, Record<string, string | null>>;
 };
@@ -222,6 +226,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   readOnlyFields: {},
   createOnlyFields: {},
   picklists: {},
+  filteredLookups: {},
   unsetValues: {},
 });
 
@@ -336,6 +341,9 @@ export async function loadObjectFields(
         .filter((f) => !f.createable || f.calculated || f.autoNumber)
         .map((f) => f.name);
       into.picklists[object] = picklistInfo(fields);
+      into.filteredLookups[object] = fields
+        .filter((f) => f.type === 'reference' && f.filteredLookupInfo && !f.filteredLookupInfo.optionalFilter)
+        .map((f) => f.name);
       into.createOnlyFields[object] = fields
         .filter((f) => f.createable && !f.calculated && !f.autoNumber && f.updateable === false)
         .map((f) => f.name);

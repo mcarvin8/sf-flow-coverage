@@ -10,6 +10,7 @@ import {
 } from './flowGraph.js';
 import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './flowTypes.js';
 import { escapeApexString } from './flowXml.js';
+import { conditionFromLookupFilter, type LookupFilter } from './lookupFilters.js';
 import {
   canInsertParent,
   EXISTING_RECORD_IDS,
@@ -107,6 +108,8 @@ type CriteriaValues = {
   picklists: Record<string, Record<string, PicklistInfo>>;
   /** Active validation rules per object. */
   validationRules: Record<string, ValidationRule[]>;
+  /** Required lookup filters per object. */
+  lookupFilters: Record<string, LookupFilter[]>;
 };
 
 /** What the criteria solver knows about the record an insert or an update test builds. */
@@ -173,9 +176,11 @@ const emptyPlan = (): CriteriaPlan => ({
 });
 
 /**
- * Makes a plan's values pass the object's validation rules for one save. A rule certain not to
- * fire is left alone. For any other rule, the plan also meets the rule's opposite when it can do
- * so without new TODOs; a rule certain to block the save that it can't avoid becomes a TODO.
+ * Makes a plan's values pass the object's validation rules and lookup filters for one save. A
+ * rule certain not to fire is left alone. For any other rule, the plan also meets the rule's
+ * opposite when it can do so without new TODOs; a rule certain to block the save that it can't
+ * avoid becomes a TODO. A lookup filter applies when the record looks up a parent the test
+ * inserts: the parent (or the record) gets the values the filter needs, or the filter becomes a TODO.
  */
 function withValidation(
   plan: CriteriaPlan,
@@ -185,7 +190,8 @@ function withValidation(
   save: 'insert' | 'update',
 ): CriteriaPlan {
   const rules = values.validationRules[object] ?? [];
-  if (rules.length === 0) return plan;
+  const filters = values.lookupFilters[object] ?? [];
+  if (rules.length === 0 && filters.length === 0) return plan;
   const ctx = criteriaContext(object, values, required, save);
   const unset = values.unsetValues[object] ?? {};
   const stateOf = (current: CriteriaPlan): FieldState => {
@@ -208,6 +214,28 @@ function withValidation(
       current = { ...current, unmet: [...current.unmet, { label: 'validation rule', text }] };
     }
   }
+  const inserted = knownRequired(object, required) ?? {};
+  for (const filter of filters) {
+    const relationship = Object.entries(values.relationships[object] ?? {}).find(
+      ([, field]) => field === filter.lookup,
+    )?.[0];
+    const lookup =
+      current.set.get(filter.lookup) ??
+      (save === 'update' ? current.prior.get(filter.lookup) : undefined) ??
+      inserted[filter.lookup];
+    // The filter only checks a lookup that's filled, and the test can only shape a parent it inserts.
+    if (!relationship || !lookup || !/Parent\.Id$/.test(lookup)) continue;
+    const met = solveCriteria(conditionFromLookupFilter(filter, relationship), ctx, current);
+    if (met.unmet.length === current.unmet.length) {
+      current = met;
+    } else {
+      const message = filter.errorMessage ? ` (${filter.errorMessage.replace(/\s+/g, ' ')})` : '';
+      current = {
+        ...current,
+        unmet: [...current.unmet, { label: 'lookup filter', text: `${filter.lookup}${message}` }],
+      };
+    }
+  }
   return current;
 }
 
@@ -218,7 +246,14 @@ function validInsertFields(
   values: CriteriaValues,
   required: RequiredFieldMap,
 ): Map<string, string> {
-  return withValidation({ ...emptyPlan(), set: new Map(overrides) }, object, values, required, 'insert').set;
+  const plan = withValidation({ ...emptyPlan(), set: new Map(overrides) }, object, values, required, 'insert');
+  // Fields its own lookup filters need on its parents (the test's grandparents).
+  for (const [parent, fields] of plan.parents) {
+    const known = values.parentFields.get(parent) ?? new Map<string, string>();
+    for (const [field, value] of fields) if (!known.has(field)) known.set(field, value);
+    values.parentFields.set(parent, known);
+  }
+  return plan.set;
 }
 
 /** Described required fields win over the built-in list for standard objects. */
@@ -844,6 +879,8 @@ export type GenerateOptions = {
   picklists?: Record<string, Record<string, PicklistInfo>>;
   /** Active validation rules per object. Generated records meet them where the generator can. */
   validationRules?: Record<string, ValidationRule[]>;
+  /** Required lookup filters per object. Parents the test inserts meet them where the generator can. */
+  lookupFilters?: Record<string, LookupFilter[]>;
 };
 
 type ResolvedLookups = {
@@ -988,6 +1025,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     createOnlyFields: options.createOnlyFields ?? {},
     picklists: options.picklists ?? {},
     validationRules: options.validationRules ?? {},
+    lookupFilters: options.lookupFilters ?? {},
   };
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);

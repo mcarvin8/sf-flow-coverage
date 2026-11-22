@@ -47,7 +47,7 @@ Tests follow the Flow's elements and assert what it is certain to do: `$Record` 
 - Steer a test down a branch it would otherwise skip, so the Flow's other elements get covered (for example the branch that creates a Task when a crew is too small). Needs the solver to work backwards through formula resources.
 - Assert updates to related records.
 - Follow loops.
-- Meet the org's lookup filters on the records the test inserts, the way it already meets validation rules: read each lookup field's filter criteria from its metadata and solve them on the parent record.
+- Meet lookup filters on standard lookup fields (such as `Contact.AccountId`), which have no `CustomField` record to read the filter from.
 
 ## Generated tests in real orgs
 

@@ -5,6 +5,7 @@ import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js'
 import { entryCondition, fieldPaths } from './conditions.js';
 import { isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
+import type { LookupFilter, ReadLookupFilters } from './lookupFilters.js';
 import { findFlowFiles, readProjectConfig } from './projectFiles.js';
 import {
   canInsertParent,
@@ -33,6 +34,8 @@ export type ScaffoldOptions = {
   describe?: DescribeObject;
   /** Reads each object's active validation rules, so generated records meet them where they can. */
   validationRules?: ReadValidationRules;
+  /** Reads required lookup filters, so the parent records a test inserts meet them where they can. */
+  lookupFilters?: ReadLookupFilters;
 };
 
 /** sObjects a generated test creates records of. */
@@ -179,9 +182,17 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       if (rules.length > 0) validationRules[object] = rules;
     }
   }
+  const lookupFilters: Record<string, LookupFilter[]> = {};
+  if (options.lookupFilters) {
+    for (const [object, lookups] of Object.entries(objectFields.filteredLookups)) {
+      if (lookups.length === 0) continue;
+      const filters = await options.lookupFilters(object, lookups);
+      if (filters.length > 0) lookupFilters[object] = filters;
+    }
+  }
 
   for (const { flowName, flow } of flows) {
-    const test = generateApexTest(flow, { ...objectFields, validationRules });
+    const test = generateApexTest(flow, { ...objectFields, validationRules, lookupFilters });
     const classPath = join(outputDir, `${test.className}.cls`);
     if (!options.force && (await exists(classPath))) {
       result.skipped.push({ flowName, reason: `${classPath} already exists. Use --force to overwrite.` });
