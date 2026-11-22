@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.4.2...v0.5.0) (2026-11-22)
+
+
+### Features
+
+* add markdown output and gate exclusions ([#31](https://github.com/mcarvin8/sf-flow-coverage/issues/31)) ([25d4abf](https://github.com/mcarvin8/sf-flow-coverage/commit/25d4abfe31b7be1aa0d2ffc4d6f3efcf0da99c2b))
+* **gate:** compare element content with the org version ([#32](https://github.com/mcarvin8/sf-flow-coverage/issues/32)) ([f0c8231](https://github.com/mcarvin8/sf-flow-coverage/commit/f0c823179b626ebe5aaa7616ac9aec42be09fbf8))
+* **scaffold:** meet field functions, CASE, and deeper related fields ([#33](https://github.com/mcarvin8/sf-flow-coverage/issues/33)) ([9e0347c](https://github.com/mcarvin8/sf-flow-coverage/commit/9e0347cdc25bf168b457c02f7b8641f5e3fca4ee))
+* **scaffold:** meet lookup filters on standard lookups ([#29](https://github.com/mcarvin8/sf-flow-coverage/issues/29)) ([7a8e265](https://github.com/mcarvin8/sf-flow-coverage/commit/7a8e26512f0bd398c6e41391cd867e23371c6d0e))
+* **scaffold:** meet required lookup filters ([#28](https://github.com/mcarvin8/sf-flow-coverage/issues/28)) ([afd9185](https://github.com/mcarvin8/sf-flow-coverage/commit/afd918552d648bb12b8728e7cb75944b0ef3fe1a))
+* **scaffold:** meet the org's validation rules ([#26](https://github.com/mcarvin8/sf-flow-coverage/issues/26)) ([d4e4fa4](https://github.com/mcarvin8/sf-flow-coverage/commit/d4e4fa43f99f7f68325d76c693be41a06b9479bd))
+
 ## [0.4.2](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.4.1...v0.4.2) (2026-11-20)
 
 
