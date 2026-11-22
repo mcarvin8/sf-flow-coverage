@@ -18,7 +18,7 @@ Uses npm (not yarn), Biome (not ESLint/Prettier), and Vitest (not Mocha/nyc). Sc
 | `npm run test:mutation:incremental` | Stryker on `src` files changed vs `origin/main` |
 | `npm run readme` | Regenerate the README command reference |
 
-Coverage thresholds (in `vitest.config.ts`): 95% lines/statements, 90% branches/functions. CI fails below them.
+Coverage thresholds (in `vitest.config.ts`): 95% on lines, statements, branches, and functions. CI fails below them.
 
 ## Windows gotcha
 

@@ -499,15 +499,10 @@ function fieldsTheFlowWrites(flow: FlowMetadata): Set<string> {
  * decision that led there, so a second test can save without the error. Undefined when the
  * generator can't meet that decision's opposite.
  */
-function planWithoutError(
-  flow: FlowMetadata,
-  walk: FlowWalk | undefined,
-  plan: CriteriaPlan,
-  ctx: SolveContext,
-): CriteriaPlan | undefined {
+function planWithoutError(walk: FlowWalk | undefined, plan: CriteriaPlan, ctx: SolveContext): CriteriaPlan | undefined {
   if (!walk?.customError) return undefined;
   const last = [...(walk.decisions ?? [])].reverse().find((d) => d.rule);
-  if (!last?.rule || !flow.graph) return undefined;
+  if (!last?.rule) return undefined;
   const avoided = solveCriteria(negate(last.rule.condition), ctx, plan);
   return avoided.unmet.length === plan.unmet.length ? avoided : undefined;
 }
@@ -600,7 +595,7 @@ function recordMethods(
     const build = context === 'insert' ? create : update;
     const first = build(plan);
     const ctx = criteriaContext(object, values, required, context);
-    const avoided = planWithoutError(flow, first.walk, plan, ctx);
+    const avoided = planWithoutError(first.walk, plan, ctx);
     const second = avoided && build(avoided);
     if (!second || second.walk?.customError) return method(name, first.body);
     return [...method(name, first.body), '', ...method(`${name}WithoutError`, second.body)];
@@ -701,9 +696,9 @@ function interviewMethod(
   name: string,
   notes: string[],
   required: RequiredFieldMap,
-  walkOutputs = false,
-  lookups: Record<string, Record<string, string>> = {},
-  validate: (object: string, overrides: Map<string, string>) => Map<string, string> = (_, overrides) => overrides,
+  walkOutputs: boolean,
+  lookups: Record<string, Record<string, string>>,
+  validate: (object: string, overrides: Map<string, string>) => Map<string, string>,
 ): string[] {
   const i2 = INDENT.repeat(2);
   const lines = [`${INDENT}@IsTest`, `${INDENT}static void ${name}() {`, ...notes.map((n) => `${i2}// ${n}`)];
@@ -940,7 +935,7 @@ function withParentInserts(
   required: RequiredFieldMap,
   original: RequiredFieldMap,
   parentFields: Map<string, Map<string, string>>,
-  validate: (object: string, overrides: Map<string, string>) => Map<string, string> = (_, overrides) => overrides,
+  validate: (object: string, overrides: Map<string, string>) => Map<string, string>,
 ): string[] {
   if (parents.size === 0) return lines;
   const i2 = INDENT.repeat(2);
@@ -1027,6 +1022,8 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     validationRules: options.validationRules ?? {},
     lookupFilters: options.lookupFilters ?? {},
   };
+  const validate = (object: string, overrides: Map<string, string>): Map<string, string> =>
+    validInsertFields(object, overrides, values, required);
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);
   let description: string;
@@ -1053,13 +1050,14 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
           'If the Flow depends on $Record, move its logic to an autolaunched subflow and test that instead.',
         ],
         required,
+        false,
+        options.lookups ?? {},
+        validate,
       );
       break;
     case 'autolaunched':
       description = 'Autolaunched (no trigger).';
-      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {}, (object, overrides) =>
-        validInsertFields(object, overrides, values, required),
-      );
+      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {}, validate);
       break;
     default:
       description = `Process type ${flow.processType ?? 'unknown'}.`;
@@ -1074,7 +1072,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     required,
     options.requiredFields ?? {},
     values.parentFields,
-    (object, overrides) => validInsertFields(object, overrides, values, required),
+    validate,
   );
   const body = [...header(flow, description), `private class ${className} {`, ...methods, '}', ''].join('\n');
   return { className, body, kind };

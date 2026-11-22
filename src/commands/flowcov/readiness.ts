@@ -88,7 +88,7 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
           Flow: f.flowName,
           Type: processTypeLabel(f.processType),
           Version: f.versionNumber ?? '',
-          ...(showChanges ? { Changes: f.changes ?? 0 } : {}),
+          ...(showChanges ? { Changes: f.changes } : {}),
         })),
       });
     }
