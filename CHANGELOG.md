@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.5.0...v0.6.0) (2026-11-22)
+
+
+### Features
+
+* **scaffold:** fill group and role lookups and insert parents five levels deep ([#37](https://github.com/mcarvin8/sf-flow-coverage/issues/37)) ([5f2b09f](https://github.com/mcarvin8/sf-flow-coverage/commit/5f2b09f46f895e493881528fbf1a63ed4c13f723))
+* **scaffold:** meet criteria that compare with labels, settings, and resources ([#35](https://github.com/mcarvin8/sf-flow-coverage/issues/35)) ([c24637f](https://github.com/mcarvin8/sf-flow-coverage/commit/c24637fc48d401b15e97e7a178e40417a72ba432))
+
 ## [0.5.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.4.2...v0.5.0) (2026-11-22)
 
 
