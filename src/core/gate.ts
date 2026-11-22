@@ -1,5 +1,6 @@
 import { missingCoverageWarning } from './coverageCheck.js';
 import { describeElements, findUncoveredElements } from './elementCoverage.js';
+import { type Exclusion, exclusionReason, findExclusion } from './exclusions.js';
 import { compareFingerprints, type FlowFingerprint, fingerprintFromXml } from './flowFingerprint.js';
 import {
   flowNameFromPath,
@@ -46,6 +47,8 @@ export type GateOptions = {
   minElementCoverage?: number;
   /** What to do when the org's version differs from the changed file. Defaults to `warn`. */
   contentCheck?: ContentCheck;
+  /** Flows a team has chosen not to check, such as legacy Flows it deferred. The gate skips them. */
+  exclusions?: Exclusion[];
 };
 
 function coverageOutcome(flow: FlowCoverage, minElementCoverage: number): Pick<GateFlowResult, 'status' | 'reason'> {
@@ -101,6 +104,17 @@ export async function evaluateGate(options: GateOptions): Promise<GateResult> {
   const toCheck: GateCandidate[] = [];
 
   for (const candidate of options.candidates) {
+    const exclusion = findExclusion(options.exclusions ?? [], candidate.flowName, candidate.path);
+    if (exclusion) {
+      results.push({
+        flowName: candidate.flowName,
+        path: candidate.path,
+        status: 'skip',
+        reason: exclusionReason(exclusion),
+        tests: [],
+      });
+      continue;
+    }
     if (candidate.error) {
       results.push({
         flowName: candidate.flowName,

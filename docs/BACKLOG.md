@@ -74,11 +74,11 @@ Done: writes SonarQube generic, Cobertura, and lcov reports, one line per elemen
 
 ### 9. Markdown output
 
-Add `--output-format markdown` (or write to `$GITHUB_STEP_SUMMARY`) for `readiness` and `gate`, so CI can post results as a pull request comment or job summary.
+Done: `readiness` and `gate` take `--output-format markdown` and print one Markdown document (tables, warnings as GitHub alerts) to standard output, for a pull request comment or `>> "$GITHUB_STEP_SUMMARY"`.
 
 ### 11. Gate exclusions
 
-Support a `.flowcovignore` file or `--exclude` flag for legacy Flows a team has deliberately deferred.
+Done: `gate` skips Flows matched by a `.flowcovignore` file in the project directory or by `--exclude`, matching Flow API names or file paths, with the pattern (and its `# reason`) in the Reason column. `readiness` still counts every Flow, since Salesforce does.
 
 ## Smaller items
 

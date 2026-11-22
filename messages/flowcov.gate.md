@@ -12,6 +12,8 @@ The gate also fails a Flow when the org has no active version of it, or when its
 
 With --from, the gate also compares each changed Flow at --to with the org's version: process type, start trigger and entry criteria, and the names of its elements and resources. A difference usually means the branch wasn't deployed to the org. By default this is a warning; use --content-check to fail instead, or to skip the comparison. The comparison doesn't look inside elements, so it can miss a change that only edits an existing element.
 
+To leave out Flows a team has chosen not to test yet, such as legacy Flows, list them in a `.flowcovignore` file in --project-dir or pass --exclude. Excluded Flows are skipped, with the pattern that matched them as the reason. Exclusions only affect the gate: Salesforce still counts every active Flow toward the org-wide total that `sf flowcov readiness` reports.
+
 For a Flow that tests run only in part, the --json output lists the elements no test runs, and a Flow that fails --min-element-coverage names them in its reason.
 
 Exits with code 1 when any Flow fails.
@@ -29,6 +31,10 @@ Exits with code 1 when any Flow fails.
 - Fail when the org runs a different version of a changed Flow than the branch:
 
   <%= config.bin %> <%= command.id %> --target-org ci-sandbox --from origin/main --content-check fail
+
+- Skip legacy Flows, and add the results to a GitHub Actions job summary:
+
+  <%= config.bin %> <%= command.id %> --target-org ci-sandbox --from origin/main --exclude "Legacy_*" --output-format markdown >> "$GITHUB_STEP_SUMMARY"
 
 - Check named Flows without git:
 
@@ -62,6 +68,27 @@ What to do when a changed Flow's content differs from the org's version.
 
 "warn" prints a warning, "fail" fails a Flow that would otherwise pass, and "off" skips the comparison (and its one Tooling API query per Flow). Only applies with --from.
 
+# flags.exclude.summary
+
+Flow API name or file path pattern for a Flow the gate skips.
+
+# flags.exclude.description
+
+A pattern without "/" matches Flow API names, ignoring case; a pattern with "/" matches file paths from the repository root. "*" matches any characters except "/", "**" matches any characters, and "?" matches one character. A path ending in "/" matches everything under it. Patterns add to those in .flowcovignore, which lists one pattern per line with an optional "# reason" after it:
+
+  # Deferred until the Q3 rewrite
+  Legacy_*
+  Close_Old_Cases  # replaced by Case_Closure next release
+  force-app/main/legacy/
+
 # error.noInput
 
 Provide --from to check changed Flows, or --flow to check named Flows.
+
+# flags.output-format.summary
+
+Format of the report printed to standard output.
+
+# flags.output-format.description
+
+"human" prints tables and warnings to the terminal. "markdown" prints the results as one Markdown document, warnings included, for a pull request comment or a GitHub Actions job summary. Redirect it to a file, for example `>> "$GITHUB_STEP_SUMMARY"`. --json takes precedence over both.

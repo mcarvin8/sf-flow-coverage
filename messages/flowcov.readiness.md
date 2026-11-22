@@ -24,6 +24,10 @@ The report also says whether "Deploy processes and flows as active" is already o
 
   <%= config.bin %> <%= command.id %> --target-org prod --fail-if-not-ready
 
+- Add the report to a GitHub Actions job summary:
+
+  <%= config.bin %> <%= command.id %> --target-org prod --output-format markdown >> "$GITHUB_STEP_SUMMARY"
+
 # flags.project-dir.summary
 
 Git repository used to rank uncovered Flows by how often they change.
@@ -39,3 +43,11 @@ Coverage percentage the org must reach.
 # flags.fail-if-not-ready.summary
 
 Exit with code 1 when the org is below the threshold.
+
+# flags.output-format.summary
+
+Format of the report printed to standard output.
+
+# flags.output-format.description
+
+"human" prints tables and warnings to the terminal. "markdown" prints the report as one Markdown document, warnings included, for a pull request comment or a GitHub Actions job summary. Redirect it to a file, for example `>> "$GITHUB_STEP_SUMMARY"`. --json takes precedence over both.

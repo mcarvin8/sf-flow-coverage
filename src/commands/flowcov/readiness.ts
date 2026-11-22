@@ -4,6 +4,7 @@ import { describeElements } from '../../core/elementCoverage.js';
 import { deployAsActiveAdvice } from '../../core/flowSettings.js';
 import { DEFAULT_THRESHOLD, isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from '../../core/flowTypes.js';
 import { getFlowChurn } from '../../core/git.js';
+import { OUTPUT_FORMATS, readinessMarkdown } from '../../core/markdown.js';
 import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
 import { buildReadinessReport } from '../../core/readiness.js';
 import { dataQuery, metadataRead, toolingQuery } from '../../core/toolingQuery.js';
@@ -39,6 +40,12 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
       summary: messages.getMessage('flags.fail-if-not-ready.summary'),
       default: false,
     }),
+    'output-format': Flags.option({
+      summary: messages.getMessage('flags.output-format.summary'),
+      description: messages.getMessage('flags.output-format.description'),
+      options: OUTPUT_FORMATS,
+      default: 'human',
+    })(),
   };
 
   public async run(): Promise<ReadinessResult> {
@@ -56,8 +63,12 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
     });
     this.spinner.stop();
 
-    for (const warning of result.warnings) this.warn(warning);
-    this.logReport(result);
+    if (flags['output-format'] === 'markdown') {
+      this.log(readinessMarkdown(result));
+    } else {
+      for (const warning of result.warnings) this.warn(warning);
+      this.logReport(result);
+    }
     if (flags['fail-if-not-ready'] && !result.ready) process.exitCode = 1;
     return result;
   }

@@ -75,7 +75,7 @@ sf flowcov transform --target-org ci-sandbox --format sonar
 
 It also reads whether **Deploy processes and flows as active** is already on and says what to do: turn it on once production is ready, or keep coverage up so deployments of active Flows keep working. The setting only affects production, so in a sandbox or scratch org the report points you to production instead.
 
-Pass `--fail-if-not-ready` to exit with code 1 below the threshold.
+Pass `--fail-if-not-ready` to exit with code 1 below the threshold. For CI, see [Markdown output](#markdown-output).
 
 ## Pull request gate
 
@@ -88,6 +88,29 @@ Coverage is read from the target org, so in CI:
 3. Run the gate against that org.
 
 The gate checks the Flow's active version in the org (or its latest version if none is active), and prints that version in the result. It fails a Flow when the org has no active version of it, or a newer inactive one: both usually mean the branch was deployed inactive. With `--from`, it also compares each changed Flow with the org's version and warns (or, with `--content-check fail`, fails) when the branch wasn't deployed. A Flow that fails `--min-element-coverage` names the elements no test runs.
+
+### Excluding Flows
+
+To leave out Flows your team has chosen not to test yet, such as legacy Flows, add a `.flowcovignore` file to the project directory, or pass `--exclude`. Each line holds one pattern, with an optional `# reason` after it:
+
+```text
+# Deferred until the Q3 rewrite
+Legacy_*
+Close_Old_Cases  # replaced by Case_Closure next release
+force-app/main/legacy/
+```
+
+A pattern without `/` matches Flow API names, ignoring case. A pattern with `/` matches file paths from the repository root, and a path ending in `/` matches everything under it. In patterns, `*` matches any characters except `/`, `**` matches any characters, and `?` matches one character. The gate skips an excluded Flow and gives the matching pattern as the reason. Exclusions only affect the gate: Salesforce still counts every active Flow toward the org-wide total.
+
+## Markdown output
+
+`readiness` and `gate` take `--output-format markdown`. With it, the report goes to standard output as one Markdown document, with its warnings included, so CI can post it as a pull request comment or add it to a GitHub Actions job summary:
+
+```bash
+sf flowcov gate --target-org ci-sandbox --from origin/main --output-format markdown >> "$GITHUB_STEP_SUMMARY"
+```
+
+The exit code is the same as with the default output, and `--json` takes precedence over both.
 
 ## Test scaffolding
 
@@ -138,7 +161,8 @@ Require Apex test coverage for every Flow a pull request changes.
 ```
 USAGE
   $ sf flowcov gate -o <value> [--json] [--flags-dir <value>] [--api-version <value>] [--from <value> | --flow
-    <value>...] [--to <value>] [-d <value>] [--min-element-coverage <value>] [--content-check warn|fail|off]
+    <value>...] [--to <value>] [-d <value>] [--min-element-coverage <value>] [--content-check warn|fail|off] [--exclude
+    <value>...] [--output-format human|markdown]
 
 FLAGS
   -d, --project-dir=<value>           [default: .] Git repository to read changed Flows from.
@@ -148,10 +172,13 @@ FLAGS
       --content-check=<option>        [default: warn] What to do when a changed Flow's content differs from the org's
                                       version.
                                       <options: warn|fail|off>
+      --exclude=<value>...            Flow API name or file path pattern for a Flow the gate skips.
       --flow=<value>...               Flow API name to check. Use instead of --from to skip git.
       --from=<value>                  Git ref the pull request merges into (the gate compares from the merge base of
                                       this ref).
       --min-element-coverage=<value>  Minimum percentage of each Flow's elements that tests must run.
+      --output-format=<option>        [default: human] Format of the report printed to standard output.
+                                      <options: human|markdown>
       --to=<value>                    [default: HEAD] Git ref with the changes.
 
 GLOBAL FLAGS
@@ -179,6 +206,11 @@ DESCRIPTION
   the org. By default this is a warning; use --content-check to fail instead, or to skip the comparison. The comparison
   doesn't look inside elements, so it can miss a change that only edits an existing element.
 
+  To leave out Flows a team has chosen not to test yet, such as legacy Flows, list them in a `.flowcovignore` file in
+  --project-dir or pass --exclude. Excluded Flows are skipped, with the pattern that matched them as the reason.
+  Exclusions only affect the gate: Salesforce still counts every active Flow toward the org-wide total that `sf flowcov
+  readiness` reports.
+
   For a Flow that tests run only in part, the --json output lists the elements no test runs, and a Flow that fails
   --min-element-coverage names them in its reason.
 
@@ -197,6 +229,11 @@ EXAMPLES
 
     $ sf flowcov gate --target-org ci-sandbox --from origin/main --content-check fail
 
+  Skip legacy Flows, and add the results to a GitHub Actions job summary:
+
+    $ sf flowcov gate --target-org ci-sandbox --from origin/main --exclude "Legacy_*" --output-format markdown >> ^
+      "$GITHUB_STEP_SUMMARY"
+
   Check named Flows without git:
 
     $ sf flowcov gate --target-org ci-sandbox --flow Account_After_Save --flow Close_Cases
@@ -206,6 +243,24 @@ FLAG DESCRIPTIONS
 
     "warn" prints a warning, "fail" fails a Flow that would otherwise pass, and "off" skips the comparison (and its one
     Tooling API query per Flow). Only applies with --from.
+
+  --exclude=<value>...  Flow API name or file path pattern for a Flow the gate skips.
+
+    A pattern without "/" matches Flow API names, ignoring case; a pattern with "/" matches file paths from the
+    repository root. "*" matches any characters except "/", "**" matches any characters, and "?" matches one character.
+    A path ending in "/" matches everything under it. Patterns add to those in .flowcovignore, which lists one pattern
+    per line with an optional "# reason" after it:
+
+    # Deferred until the Q3 rewrite
+    Legacy_*
+    Close_Old_Cases  # replaced by Case_Closure next release
+    force-app/main/legacy/
+
+  --output-format=human|markdown  Format of the report printed to standard output.
+
+    "human" prints tables and warnings to the terminal. "markdown" prints the results as one Markdown document, warnings
+    included, for a pull request comment or a GitHub Actions job summary. Redirect it to a file, for example `>>
+    "$GITHUB_STEP_SUMMARY"`. --json takes precedence over both.
 ```
 
 _See code: [src/commands/flowcov/gate.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/gate.ts)_
@@ -217,17 +272,19 @@ Report how close the org is to the coverage needed to deploy Flows as active.
 ```
 USAGE
   $ sf flowcov readiness -o <value> [--json] [--flags-dir <value>] [--api-version <value>] [-d <value>] [--since
-    <value>] [--threshold <value>] [--fail-if-not-ready]
+    <value>] [--threshold <value>] [--fail-if-not-ready] [--output-format human|markdown]
 
 FLAGS
-  -d, --project-dir=<value>  [default: .] Git repository used to rank uncovered Flows by how often they change.
-  -o, --target-org=<value>   (required) Username or alias of the target org. Not required if the `target-org`
-                             configuration variable is already set.
-      --api-version=<value>  Override the api version used for api requests made by this command
-      --fail-if-not-ready    Exit with code 1 when the org is below the threshold.
-      --since=<value>        Only count commits after this date: a date (2026-01-31) or "<n> days|weeks|months|years
-                             ago".
-      --threshold=<value>    [default: 75] Coverage percentage the org must reach.
+  -d, --project-dir=<value>     [default: .] Git repository used to rank uncovered Flows by how often they change.
+  -o, --target-org=<value>      (required) Username or alias of the target org. Not required if the `target-org`
+                                configuration variable is already set.
+      --api-version=<value>     Override the api version used for api requests made by this command
+      --fail-if-not-ready       Exit with code 1 when the org is below the threshold.
+      --output-format=<option>  [default: human] Format of the report printed to standard output.
+                                <options: human|markdown>
+      --since=<value>           Only count commits after this date: a date (2026-01-31) or "<n> days|weeks|months|years
+                                ago".
+      --threshold=<value>       [default: 75] Coverage percentage the org must reach.
 
 GLOBAL FLAGS
   --flags-dir=<value>  Import flag values from a directory.
@@ -264,6 +321,17 @@ EXAMPLES
   Fail a CI job unless the org is at or above 75%:
 
     $ sf flowcov readiness --target-org prod --fail-if-not-ready
+
+  Add the report to a GitHub Actions job summary:
+
+    $ sf flowcov readiness --target-org prod --output-format markdown >> "$GITHUB_STEP_SUMMARY"
+
+FLAG DESCRIPTIONS
+  --output-format=human|markdown  Format of the report printed to standard output.
+
+    "human" prints tables and warnings to the terminal. "markdown" prints the report as one Markdown document, warnings
+    included, for a pull request comment or a GitHub Actions job summary. Redirect it to a file, for example `>>
+    "$GITHUB_STEP_SUMMARY"`. --json takes precedence over both.
 ```
 
 _See code: [src/commands/flowcov/readiness.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/readiness.ts)_
