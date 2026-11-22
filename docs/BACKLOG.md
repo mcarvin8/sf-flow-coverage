@@ -48,7 +48,24 @@ Tests follow the Flow's elements and assert what it is certain to do: `$Record` 
 - Assert updates to related records.
 - Follow loops.
 - Meet the org's validation rules and lookup filters: read their formulas from the Tooling API and solve their opposite with the condition engine. In a large real org, these (with field-level security and approval processes) caused most generated-test failures.
-- Placeholder inputs for autolaunched Flows can still send a Flow into a loop (such as splitting a string on a placeholder delimiter) until it hits the CPU limit.
+
+## Generated tests in real orgs
+
+Found by running generated tests in a large real org. Each one makes generated tests fail for reasons outside the Flow under test.
+
+### 16. Report inaccessible fields
+
+Tests fail with "Operation failed due to fields being inaccessible" when automation that runs in user mode touches fields the user running the tests can't access. The fix is on the org side: a permission set that grants access to those fields, assigned to the user who runs tests. Help by reporting which fields are affected, from the describe's field accessibility for the running user, in `readiness` or `scaffold`, instead of letting the tests fail without saying why.
+
+### 17. Explain approval process conflicts
+
+An update test's insert can already trigger automation that submits the record for approval, so when the Flow under test submits it too, the save fails with `ALREADY_IN_PROCESS`. Detect other Flows in the project that submit records of the same object on create, and add a TODO to the generated test that explains the conflict. Don't try to work around it: whether the insert should submit the record is the org's business rule.
+
+### 18. Realistic data for autolaunched Flows
+
+- Placeholder inputs can send a Flow into a loop until it hits the CPU limit, for example splitting a string on a placeholder delimiter. Give each text input a distinct placeholder.
+- Delete Flows fail with "No records in Salesforce match your delete criteria" because the test has nothing to delete. Insert records that match the Flow's delete filters first.
+- Send Email actions fail with no recipients. Fill in the email fields and addresses the Flow sends to.
 
 ## CI and reporting
 
