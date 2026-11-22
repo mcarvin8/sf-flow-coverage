@@ -266,7 +266,7 @@ describe('OrgCoverageSource.getFlowFingerprint', () => {
     const { query, calls } = fakeQuery({
       Flow: [{ Metadata: { processType: 'AutoLaunchedFlow', decisions: [{ name: 'D' }] } }],
     });
-    expect(await new OrgCoverageSource(query).getFlowFingerprint(A)).toEqual({
+    expect(await new OrgCoverageSource(query).getFlowFingerprint(A)).toMatchObject({
       processType: 'AutoLaunchedFlow',
       filters: [],
       elements: ['decisions:D'],

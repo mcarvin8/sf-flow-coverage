@@ -100,7 +100,7 @@ const empty = (overrides: Partial<FlowFingerprint> = {}): FlowFingerprint => ({
 describe('fingerprintFromXml and fingerprintFromMetadata', () => {
   it('fingerprint the same Flow the same way from source and from the Tooling API', () => {
     const fromXml = fingerprintFromXml(XML);
-    expect(fromXml).toEqual({
+    expect(fromXml).toMatchObject({
       processType: 'AutoLaunchedFlow',
       triggerType: 'RecordAfterSave',
       recordTriggerType: 'CreateAndUpdate',
@@ -126,12 +126,12 @@ describe('fingerprintFromXml and fingerprintFromMetadata', () => {
       decisions: [{ label: 'No name' }, { name: '' }, null],
       screens: 'not a list',
     });
-    expect(fingerprint).toEqual(empty({ filters: ['A EqualTo 2026-01-31', 'B EqualTo n/a', 'C EqualTo var'] }));
+    expect(fingerprint).toMatchObject(empty({ filters: ['A EqualTo 2026-01-31', 'B EqualTo n/a', 'C EqualTo var'] }));
   });
 
   it('fingerprints missing metadata as empty', () => {
-    expect(fingerprintFromMetadata(null)).toEqual(empty());
-    expect(fingerprintFromMetadata({ start: { filters: [{}] } })).toEqual(empty({ filters: [''] }));
+    expect(fingerprintFromMetadata(null)).toMatchObject(empty());
+    expect(fingerprintFromMetadata({ start: { filters: [{}] } })).toMatchObject(empty({ filters: [''] }));
   });
 
   it('rejects content that is not a Flow', () => {
@@ -174,5 +174,198 @@ describe('compareFingerprints', () => {
     expect(compareFingerprints(empty({ elements }), empty())).toEqual([
       'only in source: assignments:A0, assignments:A1, assignments:A2, assignments:A3, assignments:A4 and 2 more',
     ]);
+  });
+});
+
+describe('fingerprints of element content', () => {
+  /** A record-triggered Flow as Flow Builder saves it. */
+  const BODY_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>64.0</apiVersion>
+    <environments>Default</environments>
+    <label>Close Check</label>
+    <decisions>
+        <name>Too_Big</name>
+        <label>Too Big</label>
+        <locationX>176</locationX>
+        <locationY>323</locationY>
+        <defaultConnectorLabel>Default Outcome</defaultConnectorLabel>
+        <rules>
+            <name>Big</name>
+            <conditionLogic>and</conditionLogic>
+            <conditions>
+                <leftValueReference>$Record.Amount__c</leftValueReference>
+                <operator>GreaterThan</operator>
+                <rightValue>
+                    <numberValue>5.0</numberValue>
+                </rightValue>
+            </conditions>
+            <connector>
+                <targetReference>Get_Items</targetReference>
+            </connector>
+            <label>Big</label>
+        </rules>
+    </decisions>
+    <processMetadataValues>
+        <name>CanvasMode</name>
+        <value>
+            <stringValue>AUTO_LAYOUT_CANVAS</stringValue>
+        </value>
+    </processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <recordLookups>
+        <name>Get_Items</name>
+        <label>Get Items</label>
+        <assignNullValuesIfNoRecordsFound>false</assignNullValuesIfNoRecordsFound>
+        <filterLogic>and</filterLogic>
+        <filters>
+            <field>Is_Done__c</field>
+            <operator>EqualTo</operator>
+            <value>
+                <booleanValue>false</booleanValue>
+            </value>
+        </filters>
+        <getFirstRecordOnly>true</getFirstRecordOnly>
+        <object>Item__c</object>
+        <queriedFields>Id</queriedFields>
+        <storeOutputAutomatically>true</storeOutputAutomatically>
+    </recordLookups>
+    <start>
+        <connector>
+            <targetReference>Too_Big</targetReference>
+        </connector>
+        <filters>
+            <field>Status__c</field>
+            <operator>EqualTo</operator>
+            <value>
+                <stringValue>Closed</stringValue>
+            </value>
+        </filters>
+        <object>Job__c</object>
+        <recordTriggerType>Update</recordTriggerType>
+        <triggerType>RecordAfterSave</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>
+`;
+
+  /** The same version as the Tooling API returns it, with an end element and its connectors. */
+  const bodyMetadata = () => ({
+    apiVersion: 64,
+    environments: ['Default'],
+    label: 'Close Check',
+    decisions: [
+      {
+        name: 'Too_Big',
+        label: 'Too Big',
+        description: null,
+        locationX: 0,
+        locationY: 0,
+        defaultConnector: { targetReference: 'END_ELEMENT_1', isGoTo: null },
+        defaultConnectorLabel: 'Default Outcome',
+        rules: [
+          {
+            name: 'Big',
+            label: 'Big',
+            conditionLogic: 'and',
+            conditions: [
+              {
+                leftValueReference: '$Record.Amount__c',
+                operator: 'GreaterThan',
+                rightValue: { numberValue: 5, stringValue: null, booleanValue: null },
+              },
+            ],
+            connector: { targetReference: 'Get_Items', isGoTo: false },
+            doesRequireRecordChangedToMeetCriteria: false,
+          },
+        ],
+      },
+    ],
+    ends: [{ name: 'END_ELEMENT_1', label: null }],
+    processMetadataValues: [],
+    processType: 'AutoLaunchedFlow',
+    recordLookups: [
+      {
+        name: 'Get_Items',
+        label: 'Get Items',
+        assignNullValuesIfNoRecordsFound: false,
+        connector: { targetReference: 'END_ELEMENT_1' },
+        filterLogic: 'and',
+        filters: [{ field: 'Is_Done__c', operator: 'EqualTo', value: { booleanValue: false } }],
+        getFirstRecordOnly: true,
+        object: 'Item__c',
+        outputAssignments: [],
+        queriedFields: ['Id'],
+        storeOutputAutomatically: true,
+      },
+    ],
+    start: {
+      connector: { targetReference: 'Too_Big' },
+      filterLogic: 'and',
+      filters: [{ field: 'Status__c', operator: 'EqualTo', value: { stringValue: 'Closed' } }],
+      object: 'Job__c',
+      recordTriggerType: 'Update',
+      scheduledPaths: [],
+      triggerType: 'RecordAfterSave',
+    },
+    status: 'Active',
+    triggerOrder: null,
+  });
+
+  const differences = (xml: string, metadata: Record<string, unknown> = bodyMetadata()) =>
+    compareFingerprints(fingerprintFromXml(xml), fingerprintFromMetadata(metadata));
+
+  it('matches a version whose only differences are how each side writes it', () => {
+    expect(differences(BODY_XML)).toEqual([]);
+    expect(fingerprintFromXml(BODY_XML).properties).toEqual({ apiVersion: '"64"', label: '"Close Check"' });
+  });
+
+  it('names elements whose content changed', () => {
+    expect(differences(BODY_XML.replace('<numberValue>5.0</numberValue>', '<numberValue>10</numberValue>'))).toEqual([
+      'changed: decisions:Too_Big',
+    ]);
+    expect(
+      differences(BODY_XML.replace('<queriedFields>Id</queriedFields>', '<queriedFields>Name</queriedFields>')),
+    ).toEqual(['changed: recordLookups:Get_Items']);
+    // A connector the org leads to an end element is a real connector in source.
+    expect(
+      differences(
+        BODY_XML.replace(
+          '<getFirstRecordOnly>',
+          '<connector><targetReference>Too_Big</targetReference></connector><getFirstRecordOnly>',
+        ),
+      ),
+    ).toEqual(['changed: recordLookups:Get_Items']);
+  });
+
+  it('notices changes to the start element and to Flow properties', () => {
+    const metadata = bodyMetadata();
+    metadata.start.scheduledPaths = [{ name: 'Later', offsetNumber: 1, offsetUnit: 'Days' }] as never;
+    expect(differences(BODY_XML, metadata)).toEqual(['the start element differs']);
+    expect(
+      differences(BODY_XML, { ...bodyMetadata(), start: { ...bodyMetadata().start, filterLogic: '1 OR 2' } }),
+    ).toEqual(['the start element differs']);
+    expect(
+      differences(
+        BODY_XML.replace(
+          '<label>Close Check</label>',
+          '<label>Close Check v2</label><runInMode>SystemModeWithoutSharing</runInMode>',
+        ),
+      ),
+    ).toEqual(['Flow properties differ: label, runInMode']);
+    // Flow Builder's settings and the default environment and run mode don't count.
+    expect(
+      differences(BODY_XML.replace('<environments>Default</environments>', '<runInMode>DefaultMode</runInMode>'), {
+        ...bodyMetadata(),
+        processMetadataValues: [{ name: 'BuilderType', value: { stringValue: 'LightningFlowBuilder' } }],
+      }),
+    ).toEqual([]);
+  });
+
+  it('compares only what both fingerprints have', () => {
+    const full = fingerprintFromXml(BODY_XML);
+    expect(
+      compareFingerprints(full, empty({ ...full, bodies: undefined, start: undefined, properties: undefined })),
+    ).toEqual([]);
   });
 });

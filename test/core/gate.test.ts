@@ -300,6 +300,6 @@ describe('collectChangedFlows', () => {
       ['Screen', 'flows/Screen.flow-meta.xml', 'Flow', 'x'],
     ]);
     expect(candidates[0].error).toMatch(/not a Flow metadata file/);
-    expect(candidates[1].fingerprint).toEqual({ processType: 'AutoLaunchedFlow', filters: [], elements: [] });
+    expect(candidates[1].fingerprint).toMatchObject({ processType: 'AutoLaunchedFlow', filters: [], elements: [] });
   });
 });

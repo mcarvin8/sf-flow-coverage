@@ -12,7 +12,7 @@ Done: when results look like missing coverage (no active Flow covered in `readin
 
 ### 2. Deeper version comparison in the gate
 
-The gate fails when the org has no active version or a newer inactive one, and `--content-check` compares process type, start trigger, entry criteria, and element names with the file at `--to`. It still misses a change that only edits an existing element (a new decision condition, a changed assignment value). Extend the fingerprint into element bodies, normalizing the Tooling API's JSON and the source XML the same way (defaults, nulls, value types, ordering) so matching versions don't warn.
+Done: `--content-check` compares each element's and resource's content, the start element, and Flow properties with the file at `--to`, and names the elements that changed. The Tooling API's JSON and the source XML are normalized the same way (key order, one-item lists, value types, nulls and false defaults, canvas positions, and the JSON's end elements and connectors to them) so matching versions don't warn.
 
 ### 3. Show the deploy-as-active setting in readiness
 
