@@ -928,6 +928,8 @@ function resolveLookups(options: GenerateOptions): ResolvedLookups {
       // The running user's default record type, which the user can always use.
       return (options.recordTypes?.[source] ?? 0) > 1 ? `defaultRecordTypeId(${source}.SObjectType)` : undefined;
     }
+    // Setup records a test inserts on its own, apart from the test's other records.
+    if (target in SETUP_RECORD_HELPERS) return `${SETUP_RECORD_HELPERS[target].name}()`;
     if (!canInsertParent(target) || !options.requiredFields?.[target]) return undefined;
     const variable = `${camel(target) || 'record'}Parent`;
     parents.set(variable, target);
@@ -958,7 +960,6 @@ function withParentInserts(
   lines: string[],
   parents: Map<string, string>,
   required: RequiredFieldMap,
-  original: RequiredFieldMap,
   parentFields: Map<string, Map<string, string>>,
   validate: (object: string, overrides: Map<string, string>) => Map<string, string>,
 ): string[] {
@@ -977,8 +978,23 @@ function withParentInserts(
       const fields = recordFieldValues(object, validate(object, parentFields.get(object) ?? new Map()), required);
       for (const [field, value] of fields) {
         const refs = referenced(value);
-        if (refs.some((r) => here.includes(r)) || (refs.length > 0 && here.length >= MAX_PARENT_DEPTH)) {
-          fields.set(field, original[object]?.[field] ?? 'null /* TODO: set this lookup */');
+        const back = refs.find((r) => here.includes(r));
+        if (back) {
+          // Each record needs the other saved first, so neither can be inserted.
+          const target = parents.get(back) as string;
+          const why =
+            target === object
+              ? `every ${object} needs another ${object}, so a test can't insert the first one`
+              : `the ${target} it needs needs this ${object} first`;
+          fields.set(
+            field,
+            `null /* TODO: set ${field}: ${why}. Use an existing record, or make the lookup optional. */`,
+          );
+        } else if (refs.length > 0 && here.length >= MAX_PARENT_DEPTH) {
+          fields.set(
+            field,
+            `null /* TODO: set ${field}: its ${parents.get(refs[0])} is more than ${MAX_PARENT_DEPTH} parent records away. */`,
+          );
         }
       }
       for (const dependency of referenced([...fields.values()].join('\n'))) visit(dependency, here);
@@ -1018,6 +1034,31 @@ function unsetValuesOf(options: GenerateOptions): Record<string, Record<string, 
     unset[object] = { ...unset[object], ...values };
   }
   return unset;
+}
+
+/**
+ * Helpers that insert a setup record (a public group, a role) for a lookup to it. Setup and other
+ * records can't be saved in the same transaction (MIXED_DML_OPERATION), so each one is inserted
+ * as the running user in `System.runAs`, which gives it a transaction of its own.
+ */
+const SETUP_RECORD_HELPERS: Record<string, { name: string; fields: string }> = {
+  Group: { name: 'newGroupId', fields: "Name = 'Flow Test Group', Type = 'Regular'" },
+  UserRole: { name: 'newUserRoleId', fields: "Name = 'Flow Test Role'" },
+};
+
+function setupRecordHelpers(lines: string[]): string[] {
+  return Object.entries(SETUP_RECORD_HELPERS)
+    .filter(([, helper]) => lines.some((line) => line.includes(`${helper.name}()`)))
+    .flatMap(([object, helper]) => [
+      '',
+      `${INDENT}private static Id ${helper.name}() {`,
+      `${INDENT}${INDENT}${object} record = new ${object}(${helper.fields});`,
+      `${INDENT}${INDENT}System.runAs(new User(Id = UserInfo.getUserId())) {`,
+      `${INDENT}${INDENT}${INDENT}insert record;`,
+      `${INDENT}${INDENT}}`,
+      `${INDENT}${INDENT}return record.Id;`,
+      `${INDENT}}`,
+    ]);
 }
 
 /** Looks up the running user's default record type for an object. */
@@ -1092,14 +1133,8 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
 
   if (methods.some((line) => line.includes('defaultRecordTypeId(')))
     methods = [...methods, '', ...DEFAULT_RECORD_TYPE_HELPER];
-  methods = withParentInserts(
-    methods,
-    lookups.parents,
-    required,
-    options.requiredFields ?? {},
-    values.parentFields,
-    validate,
-  );
+  methods = [...methods, ...setupRecordHelpers(methods)];
+  methods = withParentInserts(methods, lookups.parents, required, values.parentFields, validate);
   const body = [...header(flow, description), `private class ${className} {`, ...methods, '}', ''].join('\n');
   return { className, body, kind };
 }

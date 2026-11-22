@@ -248,8 +248,8 @@ const NOT_INSERTABLE = new Set([
   'UserRole',
 ]);
 
-/** Parents are inserted this many levels deep at most: parent, grandparent, great-grandparent. */
-export const MAX_PARENT_DEPTH = 3;
+/** Parents are inserted this many levels deep at most: a parent, its parent, and so on. */
+export const MAX_PARENT_DEPTH = 5;
 
 /** Whether a generated test can insert a record of `object` to fill a lookup to it. */
 export const canInsertParent = (object: string): boolean =>

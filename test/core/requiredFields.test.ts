@@ -243,7 +243,7 @@ describe('generateApexTest with lookups', () => {
       [
         '        Account accountParent = new Account(',
         "            Name = 'Test',",
-        '            Parent__c = null /* TODO: set a Account Id */',
+        "            Parent__c = null /* TODO: set Parent__c: every Account needs another Account, so a test can't insert the first one. Use an existing record, or make the lookup optional. */",
         '        );',
         '        insert accountParent;',
         '',
@@ -294,47 +294,67 @@ describe('generateApexTest with lookups', () => {
     expect(test.body).not.toContain('accountParent');
   });
 
-  it('inserts grandparents first, and keeps the TODO for cycles and past the depth limit', () => {
-    const todo = (target: string) => `null /* TODO: set a ${target} Id */`;
+  it('inserts groups and roles apart from the test records, as the running user', () => {
     const test = generateApexTest(recordFlow(), {
       requiredFields: {
-        Job__c: { Account__c: todo('Account') },
-        Account: { Name: "'A'", Region__c: todo('Region__c'), ParentId: todo('Account') },
-        Region__c: { Name: "'R'", Zone__c: todo('Zone__c') },
-        Zone__c: { Name: "'Z'", Area__c: todo('Area__c') },
-        Area__c: { Name: "'X'" },
+        Job__c: { Group__c: 'null /* TODO: set a Group Id */', Role__c: 'null /* TODO: set a UserRole Id */' },
       },
-      lookups: {
-        Job__c: { Account__c: 'Account' },
-        Account: { Region__c: 'Region__c', ParentId: 'Account' },
-        Region__c: { Zone__c: 'Zone__c' },
-        Zone__c: { Area__c: 'Area__c' },
-      },
+      lookups: { Job__c: { Group__c: 'Group', Role__c: 'UserRole' } },
     });
+    expect(test.body).toContain('Group__c = newGroupId(),');
+    expect(test.body).toContain('Role__c = newUserRoleId()');
     expect(test.body).toContain(
       [
-        '        Zone__c zoneParent = new Zone__c(',
-        "            Name = 'Z',",
-        '            Area__c = null /* TODO: set a Area__c Id */',
-        '        );',
-        '        insert zoneParent;',
-        '        Region__c regionParent = new Region__c(',
-        "            Name = 'R',",
-        '            Zone__c = zoneParent.Id',
-        '        );',
-        '        insert regionParent;',
-        '        Account accountParent = new Account(',
-        "            Name = 'A',",
-        '            Region__c = regionParent.Id,',
-        '            ParentId = null /* TODO: set a Account Id */',
-        '        );',
-        '        insert accountParent;',
-        '',
-        '        Job__c testRecord = new Job__c(',
-        '            Account__c = accountParent.Id',
+        '    private static Id newGroupId() {',
+        "        Group record = new Group(Name = 'Flow Test Group', Type = 'Regular');",
+        '        System.runAs(new User(Id = UserInfo.getUserId())) {',
+        '            insert record;',
+        '        }',
+        '        return record.Id;',
+        '    }',
       ].join('\n'),
     );
-    expect(test.body).not.toContain('areaParent');
+    expect(test.body).toContain("UserRole record = new UserRole(Name = 'Flow Test Role');");
+    // A test that needs neither gets neither helper.
+    expect(generateApexTest(recordFlow()).body).not.toContain('private static Id new');
+  });
+
+  it('inserts grandparents first, and keeps the TODO for cycles and past the depth limit', () => {
+    const todo = (target: string) => `null /* TODO: set a ${target} Id */`;
+    const chain = ['Region__c', 'Zone__c', 'Area__c', 'Sector__c', 'Unit__c'];
+    const requiredFields: Record<string, Record<string, string>> = {
+      Job__c: { Account__c: todo('Account') },
+      Account: { Name: "'A'", Region__c: todo('Region__c'), Contact__c: todo('Contact') },
+      Contact: { LastName: "'C'", Account__c: todo('Account') },
+    };
+    const lookups: Record<string, Record<string, string>> = {
+      Job__c: { Account__c: 'Account' },
+      Account: { Region__c: 'Region__c', Contact__c: 'Contact' },
+      Contact: { Account__c: 'Account' },
+    };
+    chain.forEach((object, i) => {
+      const next = chain[i + 1];
+      requiredFields[object] = { Name: "'N'", ...(next ? { Parent__c: todo(next) } : {}) };
+      if (next) lookups[object] = { Parent__c: next };
+    });
+    const test = generateApexTest(recordFlow(), { requiredFields, lookups });
+    // Five levels of parents: Account, Region__c, Zone__c, Area__c, and Sector__c.
+    expect(test.body).toContain(
+      [
+        '        Sector__c sectorParent = new Sector__c(',
+        "            Name = 'N',",
+        '            Parent__c = null /* TODO: set Parent__c: its Unit__c is more than 5 parent records away. */',
+        '        );',
+        '        insert sectorParent;',
+        '        Area__c areaParent = new Area__c(',
+      ].join('\n'),
+    );
+    expect(test.body).not.toContain('unitParent');
+    // Account and Contact each need the other first.
+    expect(test.body).toContain(
+      'Account__c = null /* TODO: set Account__c: the Account it needs needs this Contact first. Use an existing record, or make the lookup optional. */',
+    );
+    expect(test.body.indexOf('insert contactParent;')).toBeLessThan(test.body.indexOf('insert accountParent;'));
   });
 
   it('reads business hours and record types the org already has', () => {

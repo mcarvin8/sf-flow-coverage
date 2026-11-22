@@ -13,6 +13,7 @@ import {
 } from './conditions.js';
 import { escapeApexString } from './flowValues.js';
 import { isApexDate, isApexDatetime } from './formula.js';
+import { MAX_PARENT_DEPTH } from './requiredFields.js';
 
 /** What the solver knows about the record a test builds. */
 export type SolveContext = {
@@ -386,8 +387,8 @@ function parentSide(object: string, field: string, plan: CriteriaPlan, ctx: Solv
   };
 }
 
-/** Relationships a test can follow from the record: the record's parents, theirs, and theirs. */
-const MAX_RELATIONSHIPS = 3;
+/** Relationships a test can follow from the record: as many as it inserts parents deep. */
+const MAX_RELATIONSHIPS = MAX_PARENT_DEPTH;
 
 /**
  * Meets an atom on a related record's field (`Account__r.Type`, `Contact__r.Account.Type`): the
