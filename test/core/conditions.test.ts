@@ -5,6 +5,7 @@ import {
   conditionFromFilters,
   conditionFromFormula,
   conditionFromRule,
+  conditionFromValidationRule,
   type EvaluationEnv,
   evaluateCondition,
   evaluateExpr,
@@ -228,6 +229,47 @@ describe('evaluateCondition', () => {
   });
 });
 
+describe('dates relative to today', () => {
+  it('compare with each other, but not with fixed dates', () => {
+    const check = (formula: string, values: Record<string, string | null>) =>
+      evaluateCondition(conditionFromFormula(formula), env(values));
+    expect(check('{!$Record.D__c} < TODAY()', { '$Record.D__c': 'Date.today().addDays(-1)' })).toBe(true);
+    expect(check('{!$Record.D__c} >= TODAY() + 7', { '$Record.D__c': 'Date.today().addDays(7)' })).toBe(true);
+    expect(check('{!$Record.D__c} = TODAY()', { '$Record.D__c': 'Date.today()' })).toBe(true);
+    expect(check('{!$Record.D__c} < TODAY()', { '$Record.D__c': "Date.valueOf('2020-01-01')" })).toBeUndefined();
+  });
+});
+
+describe('conditionFromValidationRule', () => {
+  const read = (formula: string, save: 'insert' | 'update') => show(conditionFromValidationRule(formula, save));
+
+  it('reads bare field names as record fields, and settles ISNEW and ISCHANGED for the save', () => {
+    const formula =
+      'AND(ISCHANGED(Install_Date__c), Install_Date__c < TODAY(), NOT(ISPICKVAL(Status__c, "Completed")))';
+    expect(read(formula, 'update')).toBe(
+      "and(Install_Date__c IsChanged true, Install_Date__c LessThan Date.today(), not(Status__c EqualTo 'Completed'))",
+    );
+    expect(read(formula, 'insert')).toBe(
+      "and(or(), Install_Date__c LessThan Date.today(), not(Status__c EqualTo 'Completed'))",
+    );
+    expect(read('AND(ISNEW(), ISBLANK(Account__r.Type), OwnerId <> $User.Id)', 'insert')).toBe(
+      'and(and(), Account__r.Type IsNull true, OwnerId NotEqualTo $User)',
+    );
+    expect(read('AND(ISNEW(), PRIORVALUE(Stage__c) = "Open", -Amount__c > 1)', 'update')).toBe(
+      "and(or(), prior.Stage__c EqualTo 'Open', expr:-Amount__c GreaterThan 1)",
+    );
+    expect(read('AND(', 'insert')).toBe('?[validation rule] AND(');
+  });
+
+  it('blocks the save only when the record meets it', () => {
+    const rule = conditionFromValidationRule('AND(ISPICKVAL(Status__c, "Closed"), ISBLANK(Closed_Date__c))', 'insert');
+    expect(evaluateCondition(rule, env({ '$Record.Status__c': "'Closed'", '$Record.Closed_Date__c': null }))).toBe(
+      true,
+    );
+    expect(evaluateCondition(rule, env({ '$Record.Status__c': "'Open'", '$Record.Closed_Date__c': null }))).toBe(false);
+  });
+});
+
 describe('evaluateExpr', () => {
   const value = (formula: string, values: Record<string, string | null> = {}) =>
     evaluateExpr(parseFormula(formula) as Expr, env(values));
@@ -247,7 +289,9 @@ describe('evaluateExpr', () => {
       value: 'A',
     });
     expect(value('ISBLANK("")')).toEqual({ kind: 'boolean', value: true });
-    expect(value('TODAY()')).toEqual({ kind: 'set' });
+    expect(value('TODAY()')).toEqual({ kind: 'day', value: 0 });
+    expect(value('TODAY() - 3 + 1')).toEqual({ kind: 'day', value: -2 });
+    expect(value('NOW()')).toEqual({ kind: 'set' });
     expect(value('NULL')).toEqual({ kind: 'null' });
   });
 
@@ -284,6 +328,8 @@ describe('knownOf', () => {
     expect(knownOf("'a\\'b'")).toEqual({ kind: 'string', value: "a'b" });
     expect(knownOf('-1.5')).toEqual({ kind: 'number', value: -1.5 });
     expect(knownOf('false')).toEqual({ kind: 'boolean', value: false });
-    expect(knownOf('Date.today()')).toEqual({ kind: 'set' });
+    expect(knownOf('Date.today()')).toEqual({ kind: 'day', value: 0 });
+    expect(knownOf('Date.today().addDays(-2).addDays(1)')).toEqual({ kind: 'day', value: -1 });
+    expect(knownOf('Date.newInstance(2026, 1, 31)')).toEqual({ kind: 'set' });
   });
 });

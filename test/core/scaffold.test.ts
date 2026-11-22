@@ -159,6 +159,24 @@ describe('scaffoldTests', () => {
     }
   });
 
+  it('reads the validation rules of each object it describes', async () => {
+    const asked: string[] = [];
+    await scaffoldTests({
+      flowNames: ['Invoice_Before_Delete'],
+      projectDir: FIXTURE_PROJECT,
+      outputDir: out,
+      describe: async () => [
+        { name: 'Amount__c', type: 'currency', nillable: true, createable: true, defaultedOnCreate: false },
+      ],
+      validationRules: async (object) => {
+        asked.push(object);
+        return [{ name: 'Needs_Amount', formula: 'ISBLANK(Amount__c)' }];
+      },
+    });
+    expect(asked).toEqual(['Invoice__c']);
+    expect(readFileSync(join(out, 'Invoice_Before_Delete_FlowTest.cls'), 'utf8')).toContain('Amount__c = 1');
+  });
+
   it('does not overwrite existing classes unless forced', async () => {
     const classPath = join(out, 'Contact_Process_FlowTest.cls');
     writeFileSync(classPath, 'existing');

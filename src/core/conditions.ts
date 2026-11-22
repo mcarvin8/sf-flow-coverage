@@ -34,7 +34,8 @@ export type ConditionLabel =
   | 'entry criteria formula'
   | 'entry criteria formula term'
   | 'entry criteria logic'
-  | 'decision';
+  | 'decision'
+  | 'validation rule';
 
 export type Atom = {
   kind: 'atom';
@@ -288,6 +289,42 @@ export function conditionFromFormula(formula: string): Condition {
   return condition.kind === 'opaque' ? { ...condition, label: 'entry criteria formula' } : condition;
 }
 
+/**
+ * Rewrites a validation rule formula so it reads like a Flow formula: bare field names
+ * (`Status__c`, `Account__r.Type`) become `$Record` fields, `ISNEW()` becomes true or false
+ * for the save, and on insert `ISCHANGED` is false (there is no prior value to change from).
+ */
+function forSave(expr: Expr, save: 'insert' | 'update'): Expr {
+  const rewrite = (e: Expr): Expr => {
+    switch (e.kind) {
+      case 'ref':
+        return e.path.startsWith('$') ? e : { ...e, path: `$Record.${e.path}` };
+      case 'unary':
+        return { ...e, operand: rewrite(e.operand) };
+      case 'binary':
+        return { ...e, left: rewrite(e.left), right: rewrite(e.right) };
+      case 'call':
+        if (e.name === 'ISNEW' && e.args.length === 0)
+          return { kind: 'boolean', value: save === 'insert', text: e.text };
+        if (e.name === 'ISCHANGED' && save === 'insert') return { kind: 'boolean', value: false, text: e.text };
+        return { ...e, args: e.args.map(rewrite) };
+      default:
+        return e;
+    }
+  };
+  return rewrite(expr);
+}
+
+/**
+ * A validation rule's error condition for an insert or an update: true when the rule blocks the
+ * save. A formula that doesn't parse is opaque.
+ */
+export function conditionFromValidationRule(formula: string, save: 'insert' | 'update'): Condition {
+  const expr = parseFormula(formula);
+  if (!expr) return { kind: 'opaque', text: formula.replace(/\s+/g, ' ').trim(), label: 'validation rule' };
+  return formulaCondition(forSave(expr, save), 'validation rule');
+}
+
 /** A Flow's whole entry criteria: its start filters (with their logic) and its filter formula. */
 export function entryCondition(flow: Pick<FlowMetadata, 'filters' | 'filterLogic' | 'filterFormula'>): Condition {
   const parts: Condition[] = [];
@@ -352,6 +389,8 @@ export type Known =
   | { kind: 'string'; value: string }
   | { kind: 'number'; value: number }
   | { kind: 'boolean'; value: boolean }
+  /** A date relative to today, `value` days away (`Date.today().addDays(-1)` is -1). */
+  | { kind: 'day'; value: number }
   | { kind: 'set' };
 
 /** What the evaluator can look up while the Flow runs. */
@@ -372,6 +411,11 @@ export function knownOf(apex: string | null): Known {
   if (quoted) return { kind: 'string', value: quoted[1].replace(/\\(.)/g, '$1') };
   if (/^-?\d+(\.\d+)?$/.test(apex)) return { kind: 'number', value: Number(apex) };
   if (apex === 'true' || apex === 'false') return { kind: 'boolean', value: apex === 'true' };
+  const today = /^Date\.today\(\)((?:\.addDays\(-?\d+\))*)$/.exec(apex);
+  if (today) {
+    const offset = [...today[1].matchAll(/-?\d+/g)].reduce((sum, m) => sum + Number(m[0]), 0);
+    return { kind: 'day', value: offset };
+  }
   return { kind: 'set' };
 }
 
@@ -396,16 +440,18 @@ function compare(left: Known | undefined, op: ConditionOperator, right: Known | 
     if (op === 'Contains') return left.value.includes(right.value);
     return op === 'StartsWith' ? left.value.startsWith(right.value) : left.value.endsWith(right.value);
   }
-  if (left.kind !== 'number' || right.kind !== 'number') return undefined;
+  // Numbers compare with numbers, and dates relative to today with each other.
+  if (left.kind !== right.kind || (left.kind !== 'number' && left.kind !== 'day')) return undefined;
+  const [a, b] = [left.value, (right as typeof left).value];
   switch (op) {
     case 'GreaterThan':
-      return left.value > right.value;
+      return a > b;
     case 'GreaterThanOrEqualTo':
-      return left.value >= right.value;
+      return a >= b;
     case 'LessThan':
-      return left.value < right.value;
+      return a < b;
     case 'LessThanOrEqualTo':
-      return left.value <= right.value;
+      return a <= b;
     default:
       return undefined;
   }
@@ -457,6 +503,10 @@ export function evaluateExpr(expr: Expr, env: EvaluationEnv, depth = 0): Known |
         const [a, b] = [text(left), text(right)];
         return a === undefined || b === undefined ? undefined : { kind: 'string', value: a + b };
       }
+      // A date relative to today, plus or minus days.
+      if (left?.kind === 'day' && right?.kind === 'number' && (expr.op === '+' || expr.op === '-')) {
+        return { kind: 'day', value: left.value + (expr.op === '+' ? right.value : -right.value) };
+      }
       if (left?.kind !== 'number' || right?.kind !== 'number') return undefined;
       const [a, b] = [left.value, right.value];
       const value =
@@ -503,6 +553,7 @@ export function evaluateExpr(expr: Expr, env: EvaluationEnv, depth = 0): Known |
         case 'PRIORVALUE':
           return operandValue(formulaOperand(expr), env, depth + 1);
         case 'TODAY':
+          return args.length === 0 ? { kind: 'day', value: 0 } : undefined;
         case 'NOW':
           return { kind: 'set' };
         default:
