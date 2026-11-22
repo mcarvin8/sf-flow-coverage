@@ -22,7 +22,7 @@ Done: `readiness` reads `FlowSettings.enableFlowDeployAsActiveEnabled` and `Orga
 
 ### 4. More entry-criteria formulas
 
-Entry criteria go through one condition engine: `AND`/`OR`/`NOT`/`IF`/`CASE`, comparisons with literals, other fields, `$User.Id`, and date functions, `$Record__Prior`, `TEXT`/`LEN`/`UPPER`/`LOWER`/`TRIM`/`VALUE` of a field, and fields up to three relationships away. Still left as TODOs:
+Entry criteria go through one condition engine: `AND`/`OR`/`NOT`/`IF`/`CASE`, comparisons with literals, other fields, `$User.Id`, and date functions, `$Record__Prior`, `TEXT`/`LEN`/`UPPER`/`LOWER`/`TRIM`/`VALUE` of a field, and fields up to five relationships away. Still left as TODOs:
 
 - Functions of functions (`LEN(TRIM({!$Record.Name}))`), functions of several fields, and `TEXT()` of a number field compared with digits.
 - Related fields on users (`{!$Record.Owner.Name}`), and paths through the same object twice (`Account.Parent.Type`), since a test inserts one record per parent object.
@@ -35,10 +35,11 @@ Every filter operator is handled, compared with a literal, another field, `$User
 
 ### 6. Deeper parent records
 
-Required and `IsNull false` lookups get parent records up to three levels deep, polymorphic lookups use the running user or the first object a test can insert, and `RecordType` and `BusinessHours` lookups read what the org has. Still left as TODOs:
+Required and `IsNull false` lookups get parent records up to five levels deep, polymorphic lookups use the running user or the first object a test can insert, `Profile` lookups use the running user's profile, `Group` and `UserRole` lookups get a record inserted in `System.runAs` (no mixed DML), and `RecordType` and `BusinessHours` lookups read what the org has. Still left as TODOs, with a reason in the comment:
 
-- `Profile`, `Group` (queues), and `UserRole` lookups, which need localized names or setup DML.
-- Lookups back into their own chain (self-lookups) and parents past three levels.
+- Required lookups that form a cycle (an object that requires another of its kind, or two objects that each require the other). Neither record can be saved first, so the test needs an existing record or an optional lookup.
+- Parents past five levels.
+- Queues as owners, which also need a `QueueSobject` for the object; owner lookups use the running user instead.
 
 ### 7. Real assertions
 
