@@ -1,8 +1,12 @@
 import {
   type Atom,
+  applyFieldFunction,
   type Condition,
   type ConditionLabel,
   type ConditionOperator,
+  compare,
+  type FieldFunction,
+  type Known,
   knownOf,
   negate,
   type Operand,
@@ -28,6 +32,11 @@ export type SolveContext = {
   lookups: Record<string, string>;
   /** Values for a parent object's fields, for criteria on related records. */
   parentFieldValues(object: string): Record<string, string>;
+  /**
+   * A parent object's relationships and lookups, for criteria on records more than one
+   * relationship away (`Contact__r.Account.Type`). Without it, criteria reach only the parents.
+   */
+  parentLinks?(object: string): { relationships: Record<string, string>; lookups: Record<string, string> };
   /**
    * Whether a test can set a field of `object` on insert, or change it in an update. Formula
    * fields can't be set at all; master-detail fields usually can't change after the insert.
@@ -124,8 +133,59 @@ type Side = {
   field: string;
 };
 
+/** The longest text value a test sets to meet a `LEN` comparison. */
+const MAX_LENGTH = 255;
+
+/** A first guess at a field value whose function result meets the comparison. */
+function functionGuess(fn: FieldFunction, op: ConditionOperator, target: Known): string | undefined {
+  if (fn === 'LEN' || fn === 'VALUE') {
+    if (target.kind !== 'number') return undefined;
+    const n = target.value;
+    const steps: Partial<Record<ConditionOperator, number>> = { ...STEPS, EqualTo: 0, NotEqualTo: 1 };
+    const step = steps[op];
+    if (step === undefined) return undefined;
+    if (fn === 'VALUE') return `'${String(Number((n + step).toFixed(10)))}'`;
+    const length = n + step;
+    return Number.isInteger(length) && length >= 1 && length <= MAX_LENGTH ? `'${'x'.repeat(length)}'` : undefined;
+  }
+  if (target.kind !== 'string' || !['EqualTo', 'Contains', 'StartsWith', 'EndsWith'].includes(op)) return undefined;
+  // TEXT() of a number field compared with digits: setting text there wouldn't compile.
+  if (fn === 'TEXT' && /^\s*-?\d/.test(target.value)) return undefined;
+  return `'${escapeApexString(target.value)}'`;
+}
+
+/**
+ * Meets a comparison of a function of the field (`LEN(Name) > 3`, `TEXT(Stage__c) = 'Won'`):
+ * keeps a planned value that already meets it, or sets one that does.
+ */
+function meetThrough(side: Side, fn: FieldFunction, op: ConditionOperator, right: string | undefined): boolean {
+  if (right === undefined || op === 'IsChanged') return false;
+  const target = knownOf(right);
+  const holds = (apex: string): boolean => compare(applyFieldFunction(fn, knownOf(apex)), op, target) === true;
+  const current = side.current();
+  if (current !== undefined && !isNullish(current) && holds(current)) return true;
+  if (holds('null') && side.keepEmpty()) return true;
+  // A value the plan already set can't change; one the insert sets anyway (a required field's) can.
+  const value = [functionGuess(fn, op, target), side.values[side.field], side.alternates[side.field]].find(
+    (candidate) => candidate !== undefined && holds(candidate),
+  );
+  return value !== undefined && side.assign(value);
+}
+
+/** Functions that leave a blank value blank, so `ISBLANK(TEXT(f))` is `ISBLANK(f)`. */
+const BLANK_PRESERVING = new Set<FieldFunction>(['TEXT', 'UPPER', 'LOWER', 'TRIM']);
+
 /** Meets one comparison on one side (a record field, its prior value, or a parent field). */
-function meet(side: Side, op: ConditionOperator, right: string | undefined, wanted?: boolean): boolean {
+function meet(
+  side: Side,
+  op: ConditionOperator,
+  right: string | undefined,
+  wanted?: boolean,
+  fn?: FieldFunction,
+): boolean {
+  if (fn && !(op === 'IsNull' && BLANK_PRESERVING.has(fn))) {
+    return op === 'IsNull' ? false : meetThrough(side, fn, op, right);
+  }
   const current = side.current();
   switch (op) {
     case 'IsNull':
@@ -158,7 +218,7 @@ function rightValue(right: Operand | undefined, plan: CriteriaPlan, ctx: SolveCo
   if (!right) return undefined;
   if (right.kind === 'value') return right.apex;
   if (right.kind === 'user') return 'UserInfo.getUserId()';
-  if (right.kind !== 'field' || right.prior || right.path.length !== 1) return undefined;
+  if (right.kind !== 'field' || right.prior || right.fn || right.path.length !== 1) return undefined;
   const field = right.path[0];
   const planned = plan.set.get(field) ?? (ctx.context === 'insert' ? ctx.inserted[field] : undefined);
   if (planned !== undefined && !isNullish(planned)) return planned;
@@ -242,6 +302,52 @@ function parentSide(object: string, field: string, plan: CriteriaPlan, ctx: Solv
   };
 }
 
+/** Relationships a test can follow from the record: the record's parents, theirs, and theirs. */
+const MAX_RELATIONSHIPS = 3;
+
+/**
+ * Meets an atom on a related record's field (`Account__r.Type`, `Contact__r.Account.Type`): the
+ * record looks up a parent the test inserts, which looks up the next one, and the last one gets
+ * the value. `RecordType.DeveloperName` at the end sets that record's record type instead.
+ */
+function meetRelated(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean {
+  const left = atom.left as Extract<Operand, { kind: 'field' }>;
+  const hops = left.path.slice(0, -1);
+  const field = left.path[left.path.length - 1];
+  if (hops.length > MAX_RELATIONSHIPS) return false;
+  let object = ctx.object;
+  let side = (name: string): Side => recordSide(name, plan, ctx);
+  const visited = new Set<string>();
+  for (let i = 0; i < hops.length; i++) {
+    const relationship = hops[i];
+    if (relationship === 'RecordType' && i === hops.length - 1) {
+      if (field !== 'DeveloperName' || atom.op !== 'EqualTo' || left.fn) return false;
+      const name = atom.right?.kind === 'value' ? knownOf(atom.right.apex) : undefined;
+      if (name?.kind !== 'string') return false;
+      return side('RecordTypeId').assign(
+        `Schema.SObjectType.${object}.getRecordTypeInfosByDeveloperName().get('${escapeApexString(name.value)}').getRecordTypeId()`,
+      );
+    }
+    const links = i === 0 ? { relationships: ctx.relationships, lookups: ctx.lookups } : ctx.parentLinks?.(object);
+    const lookup = links?.relationships[relationship];
+    const parent = lookup ? links?.lookups[lookup] : undefined;
+    const id = lookup ? (i === 0 ? ctx.fieldValues : ctx.parentFieldValues(object))[lookup] : undefined;
+    // A test inserts one record per parent object, so a chain can't pass through an object twice.
+    if (!lookup || !parent || !id || !/Parent\.Id$/.test(id) || visited.has(parent)) return false;
+    if (!side(lookup).assign(id)) return false;
+    visited.add(parent);
+    object = parent;
+    side = (name) => parentSide(parent, name, plan, ctx);
+  }
+  return meet(
+    side(field),
+    atom.op,
+    rightValue(atom.right, plan, ctx),
+    atom.right?.kind === 'value' ? atom.right.apex === 'true' : undefined,
+    left.fn,
+  );
+}
+
 /** Meets an atom, or returns false. */
 function meetAtom(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean {
   const { left, op } = atom;
@@ -250,28 +356,14 @@ function meetAtom(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean {
 
   if (left.prior) {
     if (ctx.context !== 'update' || left.path.length !== 1 || op === 'IsChanged') return false;
-    return meet(priorSide(left.path[0], plan, ctx), op, rightValue(atom.right, plan, ctx), wanted);
+    return meet(priorSide(left.path[0], plan, ctx), op, rightValue(atom.right, plan, ctx), wanted, left.fn);
   }
 
-  if (left.path.length === 2) {
-    const [relationship, field] = left.path;
-    if (relationship === 'RecordType' && field === 'DeveloperName' && op === 'EqualTo') {
-      const name = atom.right?.kind === 'value' ? knownOf(atom.right.apex) : undefined;
-      if (name?.kind !== 'string') return false;
-      const id = `Schema.SObjectType.${ctx.object}.getRecordTypeInfosByDeveloperName().get('${escapeApexString(name.value)}').getRecordTypeId()`;
-      return recordSide('RecordTypeId', plan, ctx).assign(id);
-    }
-    const lookup = ctx.relationships[relationship];
-    const parent = lookup ? ctx.lookups[lookup] : undefined;
-    const id = lookup ? ctx.fieldValues[lookup] : undefined;
-    if (!lookup || !parent || !id || !/Parent\.Id$/.test(id)) return false;
-    if (!recordSide(lookup, plan, ctx).assign(id)) return false;
-    return meet(parentSide(parent, field, plan, ctx), op, rightValue(atom.right, plan, ctx), wanted);
-  }
-  if (left.path.length !== 1) return false;
+  if (left.path.length > 1) return meetRelated(atom, plan, ctx);
 
   const field = left.path[0];
   const side = recordSide(field, plan, ctx);
+  if (left.fn) return meet(side, op, rightValue(atom.right, plan, ctx), wanted, left.fn);
   if (op === 'IsChanged') {
     if (ctx.context !== 'update' || wanted === undefined) return false;
     if (!wanted) {

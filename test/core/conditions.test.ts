@@ -30,7 +30,9 @@ function show(condition: Condition): string {
       const side = (o: Operand): string => {
         switch (o.kind) {
           case 'field':
-            return `${o.prior ? 'prior.' : ''}${o.path.join('.')}`;
+            return o.fn
+              ? `${o.fn}(${o.prior ? 'prior.' : ''}${o.path.join('.')})`
+              : `${o.prior ? 'prior.' : ''}${o.path.join('.')}`;
           case 'value':
             return o.apex;
           case 'user':
@@ -153,7 +155,7 @@ describe('conditionFromFormula', () => {
 
   it('keeps parts it cannot read as opaque terms, and a formula it cannot read as one', () => {
     expect(read('AND({!$Record.A__c}, LEN({!$Record.B__c}) > 3, FOO())')).toBe(
-      'and(A__c EqualTo true, expr:LEN({!$Record.B__c}) GreaterThan 3, ?[entry criteria formula term] FOO())',
+      'and(A__c EqualTo true, LEN(B__c) GreaterThan 3, ?[entry criteria formula term] FOO())',
     );
     expect(read('AND(1 + 2, -{!$Record.A__c}, ISPICKVAL(a), NOT(a, b), IF(a, b))')).toBe(
       'and(?[entry criteria formula term] 1 + 2, ?[entry criteria formula term] -{!$Record.A__c}, ?[entry criteria formula term] ISPICKVAL(a), ?[entry criteria formula term] NOT(a, b), ?[entry criteria formula term] IF(a, b))',
@@ -302,8 +304,8 @@ describe('evaluateExpr', () => {
       '1 / 0',
       'IF({!a}, 1, 2)',
       'BLANKVALUE({!a}, 1)',
-      'TEXT({!d})',
-      'LEN("x")',
+      'TEXT({!a})',
+      'LEN(5)',
       '!5',
       '-"x"',
       '"x" & 1',

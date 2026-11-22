@@ -113,6 +113,27 @@ function grandparentObjects(objects: string[], fields: ObjectFields): string[] {
   );
 }
 
+/**
+ * Objects along the entry criteria's relationship paths (`Contact__r.Account.Type` reaches
+ * Contact, then Account), as far as the described objects go.
+ */
+function criteriaPathObjects(flows: FlowMetadata[], fields: ObjectFields): string[] {
+  const objects: string[] = [];
+  for (const flow of flows) {
+    if (!flow.object) continue;
+    for (const path of fieldPaths(entryCondition(flow))) {
+      let object = flow.object;
+      for (const relationship of path.slice(0, Math.min(path.length - 1, MAX_PARENT_DEPTH))) {
+        const target = fields.lookups[object]?.[fields.relationships[object]?.[relationship] ?? ''];
+        if (!target || !canInsertParent(target)) break;
+        objects.push(target);
+        object = target;
+      }
+    }
+  }
+  return objects;
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -170,7 +191,13 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     for (let depth = 1; depth <= MAX_PARENT_DEPTH && level.length > 0; depth++) {
       const fresh = [...new Set(level)].filter((object) => !(object in objectFields.requiredFields));
       await loadObjectFields(fresh, options.describe, objectFields);
-      level = grandparentObjects(fresh, objectFields);
+      level = [
+        ...grandparentObjects(fresh, objectFields),
+        ...criteriaPathObjects(
+          flows.map((f) => f.flow),
+          objectFields,
+        ),
+      ].filter((object) => !(object in objectFields.requiredFields));
     }
   }
 
