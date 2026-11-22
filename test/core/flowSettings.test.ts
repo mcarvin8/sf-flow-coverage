@@ -16,7 +16,7 @@ describe('readDeployAsActive', () => {
   });
 
   it('asks for the Flow settings and gives up quietly when it cannot read them', async () => {
-    const asked: string[][] = [];
+    const asked: Array<[string, string | string[]]> = [];
     await readDeployAsActive(async (type, fullName) => {
       asked.push([type, fullName]);
       return {};

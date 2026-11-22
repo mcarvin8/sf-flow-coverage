@@ -1,5 +1,6 @@
 /** Reads one metadata component, as `connection.metadata.read(type, fullName)` does. */
-export type MetadataRead = (type: string, fullName: string) => Promise<unknown>;
+/** Reads one or more components (up to 10). */
+export type MetadataRead = (type: string, fullName: string | string[]) => Promise<unknown>;
 
 /**
  * Whether "Deploy processes and flows as active" is on (`FlowSettings.enableFlowDeployAsActiveEnabled`).
