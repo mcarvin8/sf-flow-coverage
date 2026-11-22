@@ -13,6 +13,8 @@ export type FlowGraph = {
   nodes: Record<string, FlowNode>;
   /** Formula resources by name, for decisions that read them. */
   formulas: Record<string, Expr>;
+  /** Apex values of constant resources by name. */
+  constants?: Record<string, string>;
   /**
    * Get, Update, and Delete Records filters that compare a field with a variable, such as
    * `Id = {!recordId}`. Tells which object an Id passed in as text belongs to.
@@ -251,7 +253,13 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
     const expr = parseFormula(text(formula.expression) ?? '');
     if (name && expr) formulas[name] = expr;
   }
-  return { start: target(asRecord(flow.start)?.connector), nodes, formulas, idFilters };
+  const constants: Record<string, string> = {};
+  for (const constant of asArray(flow.constants)) {
+    const name = text(constant.name);
+    const value = parseFlowValue(asRecord(constant.value)).apexValue;
+    if (name && value !== undefined) constants[name] = value;
+  }
+  return { start: target(asRecord(flow.start)?.connector), nodes, formulas, constants, idFilters };
 }
 
 /**
@@ -339,7 +347,10 @@ function undecidedAt(graph: FlowGraph, node: FlowNode): FlowWalk['undecided'] {
  */
 export function walkFlow(graph: FlowGraph, initial: FieldState, options: WalkOptions = {}): FlowWalk {
   const state = new Map(initial);
-  const env: EvaluationEnv = { get: (reference) => state.get(reference), formula: (name) => graph.formulas[name] };
+  const env: EvaluationEnv = {
+    get: (reference) => (state.has(reference) ? state.get(reference) : graph.constants?.[reference]),
+    formula: (name) => graph.formulas[name],
+  };
   const walk: Required<Omit<FlowWalk, 'customError' | 'undecided'>> = {
     writes: [],
     variables: [],

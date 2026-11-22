@@ -29,9 +29,9 @@ Entry criteria go through one condition engine: `AND`/`OR`/`NOT`/`IF`/`CASE`, co
 
 ### 5. More filter operators
 
-Every filter operator is handled, compared with a literal, another field, or `$User.Id`. Still left as TODOs:
+Every filter operator is handled, compared with a literal, another field, `$User.Id`, a constant or formula resource, `$Label`, a field of `$User`, `$Profile`, or `$Organization`, or a `$Setup` custom setting (the test inserts its org-wide default). Still left as TODOs:
 
-- Filters compared with other resources, such as `$Setup` custom settings or `$Label`.
+- `$Permission` (a test would need a permission set with the custom permission assigned), and variables, whose values the start element can't see.
 
 ### 6. Deeper parent records
 

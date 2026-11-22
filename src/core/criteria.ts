@@ -37,6 +37,10 @@ export type SolveContext = {
    * relationship away (`Contact__r.Account.Type`). Without it, criteria reach only the parents.
    */
   parentLinks?(object: string): { relationships: Record<string, string>; lookups: Record<string, string> };
+  /** The Apex value of a Flow resource a condition compares with: a constant, or a formula. */
+  resource?(name: string): string | undefined;
+  /** Values for a custom setting's fields, for a `$Setup` value the test inserts. */
+  settingFieldValues?(setting: string): Record<string, string>;
   /**
    * Whether a test can set a field of `object` on insert, or change it in an update. Formula
    * fields can't be set at all; master-detail fields usually can't change after the insert.
@@ -67,25 +71,62 @@ export type CriteriaPlan = {
   keep: Set<string>;
   /** Fields to set on parent records, per parent object. */
   parents: Map<string, Map<string, string>>;
+  /** Fields to set on each custom setting's org-wide default, which the test inserts first. */
+  settings: Map<string, Map<string, string>>;
   /** Conditions the plan doesn't meet, for TODOs. */
   unmet: Array<{ label: ConditionLabel; text: string }>;
 };
 
-const emptyPlan = (): CriteriaPlan => ({
+export const emptyPlan = (): CriteriaPlan => ({
   set: new Map(),
   prior: new Map(),
   keep: new Set(),
   parents: new Map(),
+  settings: new Map(),
   unmet: [],
 });
+
+const cloneFields = (map: Map<string, Map<string, string>>): Map<string, Map<string, string>> =>
+  new Map([...map].map(([object, fields]) => [object, new Map(fields)]));
 
 const clonePlan = (plan: CriteriaPlan): CriteriaPlan => ({
   set: new Map(plan.set),
   prior: new Map(plan.prior),
   keep: new Set(plan.keep),
-  parents: new Map([...plan.parents].map(([object, fields]) => [object, new Map(fields)])),
+  parents: cloneFields(plan.parents),
+  settings: cloneFields(plan.settings),
   unmet: [...plan.unmet],
 });
+
+/** `$Setup.Settings__c.Field__c`, split into the custom setting and its field. */
+const SETUP_REF = /^\$Setup\.([A-Za-z]\w*)\.([A-Za-z]\w*)$/;
+
+/**
+ * Apex for a global value a test reads but can't set: a custom label, or a field of the running
+ * user, their profile, or the org. Undefined for anything else.
+ */
+export function globalValue(reference: string): string | undefined {
+  const [scope, ...rest] = reference.split('.');
+  const name = rest.join('.');
+  if (rest.length !== 1 || !/^[A-Za-z]\w*$/.test(name)) return undefined;
+  switch (scope) {
+    case '$Label': {
+      // A packaged label, `ns__Name` in a formula, is `System.Label.ns.Name` in Apex.
+      const packaged = /^([A-Za-z][A-Za-z0-9]*)__(\w+)$/.exec(name);
+      return packaged ? `System.Label.${packaged[1]}.${packaged[2]}` : `System.Label.${name}`;
+    }
+    case '$User':
+      return name === 'Id'
+        ? 'UserInfo.getUserId()'
+        : `[SELECT ${name} FROM User WHERE Id = :UserInfo.getUserId()].${name}`;
+    case '$Profile':
+      return `[SELECT ${name} FROM Profile WHERE Id = :UserInfo.getProfileId()].${name}`;
+    case '$Organization':
+      return `[SELECT ${name} FROM Organization].${name}`;
+    default:
+      return undefined;
+  }
+}
 
 const STEPS: Partial<Record<ConditionOperator, number>> = {
   GreaterThan: 1,
@@ -197,7 +238,9 @@ function meet(
     case 'NotEqualTo': {
       if (right === undefined) return false;
       if (current !== undefined) return differentValue(right, [current]) !== undefined;
-      const value = differentValue(right, [side.values[side.field], side.alternates[side.field]]);
+      // A checkbox differs from true when false, and the other way round.
+      const flipped = right === 'true' ? 'false' : right === 'false' ? 'true' : undefined;
+      const value = differentValue(right, [side.values[side.field], side.alternates[side.field], flipped]);
       return value !== undefined && side.assign(value);
     }
     case 'Contains':
@@ -214,10 +257,25 @@ function meet(
 }
 
 /** The Apex value of the right-hand side, planning a value for a field it compares with. */
-function rightValue(right: Operand | undefined, plan: CriteriaPlan, ctx: SolveContext): string | undefined {
+function rightValue(
+  right: Operand | undefined,
+  plan: CriteriaPlan,
+  ctx: SolveContext,
+  left?: Side,
+): string | undefined {
   if (!right) return undefined;
   if (right.kind === 'value') return right.apex;
   if (right.kind === 'user') return 'UserInfo.getUserId()';
+  if (right.kind === 'ref') {
+    const setup = SETUP_REF.exec(right.name);
+    if (!setup) return globalValue(right.name) ?? ctx.resource?.(right.name);
+    // The test inserts the setting with the value it gives the compared field.
+    const side = settingSide(setup[1], setup[2], plan, ctx);
+    const planned = side.current();
+    if (planned !== undefined) return planned;
+    const value = side.values[side.field] ?? left?.current() ?? left?.values[left.field];
+    return value !== undefined && !isNullish(value) && side.assign(value) ? value : undefined;
+  }
   if (right.kind !== 'field' || right.prior || right.fn || right.path.length !== 1) return undefined;
   const field = right.path[0];
   const planned = plan.set.get(field) ?? (ctx.context === 'insert' ? ctx.inserted[field] : undefined);
@@ -226,6 +284,32 @@ function rightValue(right: Operand | undefined, plan: CriteriaPlan, ctx: SolveCo
   if (value === undefined || plan.keep.has(field)) return undefined;
   if (!recordSide(field, plan, ctx).assign(value)) return undefined;
   return value;
+}
+
+/** A field of a custom setting's org-wide default, which the test inserts when the plan sets any. */
+function settingSide(setting: string, field: string, plan: CriteriaPlan, ctx: SolveContext): Side {
+  const key = `$Setup.${setting}.${field}`;
+  return {
+    field,
+    values: ctx.settingFieldValues?.(setting) ?? {},
+    alternates: {},
+    current: () => plan.settings.get(setting)?.get(field),
+    assign: (value) => {
+      const fields = plan.settings.get(setting) ?? new Map<string, string>();
+      const existing = fields.get(field);
+      if (existing !== undefined) return existing === value;
+      if (plan.keep.has(key)) return false;
+      fields.set(field, value);
+      plan.settings.set(setting, fields);
+      return true;
+    },
+    // Without the setting, a test reads every field as empty.
+    keepEmpty: () => {
+      if (plan.settings.get(setting)?.has(field)) return false;
+      plan.keep.add(key);
+      return true;
+    },
+  };
 }
 
 function recordSide(field: string, plan: CriteriaPlan, ctx: SolveContext): Side {
@@ -339,10 +423,11 @@ function meetRelated(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean
     object = parent;
     side = (name) => parentSide(parent, name, plan, ctx);
   }
+  const last = side(field);
   return meet(
-    side(field),
+    last,
     atom.op,
-    rightValue(atom.right, plan, ctx),
+    rightValue(atom.right, plan, ctx, last),
     atom.right?.kind === 'value' ? atom.right.apex === 'true' : undefined,
     left.fn,
   );
@@ -351,19 +436,27 @@ function meetRelated(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean
 /** Meets an atom, or returns false. */
 function meetAtom(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean {
   const { left, op } = atom;
-  if (left.kind !== 'field') return false;
   const wanted = atom.right?.kind === 'value' ? atom.right.apex === 'true' : undefined;
+  if (left.kind === 'ref') {
+    // A custom setting the test can insert, such as a switch that turns the Flow on.
+    const setup = SETUP_REF.exec(left.name);
+    if (!setup || op === 'IsChanged') return false;
+    const side = settingSide(setup[1], setup[2], plan, ctx);
+    return meet(side, op, rightValue(atom.right, plan, ctx, side), wanted);
+  }
+  if (left.kind !== 'field') return false;
 
   if (left.prior) {
     if (ctx.context !== 'update' || left.path.length !== 1 || op === 'IsChanged') return false;
-    return meet(priorSide(left.path[0], plan, ctx), op, rightValue(atom.right, plan, ctx), wanted, left.fn);
+    const prior = priorSide(left.path[0], plan, ctx);
+    return meet(prior, op, rightValue(atom.right, plan, ctx, prior), wanted, left.fn);
   }
 
   if (left.path.length > 1) return meetRelated(atom, plan, ctx);
 
   const field = left.path[0];
   const side = recordSide(field, plan, ctx);
-  if (left.fn) return meet(side, op, rightValue(atom.right, plan, ctx), wanted, left.fn);
+  if (left.fn) return meet(side, op, rightValue(atom.right, plan, ctx, side), wanted, left.fn);
   if (op === 'IsChanged') {
     if (ctx.context !== 'update' || wanted === undefined) return false;
     if (!wanted) {
@@ -378,7 +471,7 @@ function meetAtom(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean {
     const value = ctx.changedValues[field];
     return value !== undefined && value !== before && side.assign(value);
   }
-  return meet(side, op, rightValue(atom.right, plan, ctx), wanted);
+  return meet(side, op, rightValue(atom.right, plan, ctx, side), wanted);
 }
 
 /** `IsChanged` atoms go last, so a field another condition sets counts as changed. */
