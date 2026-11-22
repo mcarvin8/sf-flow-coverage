@@ -61,6 +61,12 @@ function idInputFilters(flow: FlowMetadata): Array<{ variable: string; object: s
   return (flow.graph?.idFilters ?? []).filter((f) => inputs.has(f.variable));
 }
 
+/** Custom settings the entry criteria read through `$Setup`, which a test inserts with values. */
+function settingObjects(flow: FlowMetadata): string[] {
+  const text = [flow.filterFormula ?? '', ...flow.filters.map((f) => f.rawValue ?? '')].join('\n');
+  return [...text.matchAll(/\$Setup\.([A-Za-z]\w*)\./g)].map((m) => m[1]);
+}
+
 /** Objects filtered by a lookup field compared with a text input, to learn what the lookup points to. */
 function idInputLookupObjects(flow: FlowMetadata): string[] {
   return idInputFilters(flow)
@@ -180,7 +186,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
   const objectFields = emptyObjectFields();
   if (options.describe) {
     await loadObjectFields(
-      flows.flatMap((f) => [...objectsToCreate(f.flow), ...idInputLookupObjects(f.flow)]),
+      flows.flatMap((f) => [...objectsToCreate(f.flow), ...idInputLookupObjects(f.flow), ...settingObjects(f.flow)]),
       options.describe,
       objectFields,
     );

@@ -138,6 +138,7 @@ describe('parseFlowGraph', () => {
     expect(parseFlowXml('F', '<Flow><processType>Flow</processType></Flow>').graph).toEqual({
       nodes: {},
       formulas: {},
+      constants: {},
       idFilters: [],
     });
   });

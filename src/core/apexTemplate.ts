@@ -1,5 +1,5 @@
 import { conditionFromValidationRule, entryCondition, evaluateCondition, knownOf, negate } from './conditions.js';
-import { type CriteriaPlan, type SolveContext, solveCriteria } from './criteria.js';
+import { type CriteriaPlan, emptyPlan, type SolveContext, solveCriteria } from './criteria.js';
 import {
   type FieldState,
   type FieldWrite,
@@ -10,6 +10,7 @@ import {
 } from './flowGraph.js';
 import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './flowTypes.js';
 import { escapeApexString } from './flowXml.js';
+import { formulaToApex } from './formula.js';
 import { conditionFromLookupFilter, type LookupFilter } from './lookupFilters.js';
 import {
   canInsertParent,
@@ -110,6 +111,8 @@ type CriteriaValues = {
   validationRules: Record<string, ValidationRule[]>;
   /** Required lookup filters per object. */
   lookupFilters: Record<string, LookupFilter[]>;
+  /** Apex values of the Flow's constants and formula resources that have one, by name. */
+  resources: Record<string, string>;
 };
 
 /** What the criteria solver knows about the record an insert or an update test builds. */
@@ -128,6 +131,8 @@ function criteriaContext(
     relationships: values.relationships[object] ?? {},
     lookups: values.lookups[object] ?? {},
     parentFieldValues: (parent) => values.fieldValues[parent] ?? {},
+    resource: (name) => values.resources[name],
+    settingFieldValues: (setting) => values.fieldValues[setting] ?? {},
     parentLinks: (parent) => ({
       relationships: values.relationships[parent] ?? {},
       lookups: values.lookups[parent] ?? {},
@@ -171,13 +176,25 @@ function planCriteria(
 
 const criteriaTodos = (plan: CriteriaPlan): string[] => plan.unmet.map((u) => `// TODO: ${u.label}: ${u.text}`);
 
-const emptyPlan = (): CriteriaPlan => ({
-  set: new Map(),
-  prior: new Map(),
-  keep: new Set(),
-  parents: new Map(),
-  unmet: [],
-});
+/**
+ * Inserts the org-wide default of each custom setting the criteria read through `$Setup`, with
+ * the values they need. A test sees no custom setting records it doesn't insert.
+ */
+const settingInserts = (plan: CriteriaPlan, indent: string): string[] =>
+  [...plan.settings].map(([setting, fields]) => {
+    const values = [...fields].map(([field, value]) => `, ${field} = ${value}`).join('');
+    return `${indent}insert new ${setting}(SetupOwnerId = UserInfo.getOrganizationId()${values});`;
+  });
+
+/** Apex values of a Flow's constants, and of its formula resources that have one. */
+function flowResources(flow: FlowMetadata): Record<string, string> {
+  const resources: Record<string, string> = { ...flow.graph?.constants };
+  for (const [name, expr] of Object.entries(flow.graph?.formulas ?? {})) {
+    const apex = formulaToApex(expr);
+    if (apex !== undefined) resources[name] = apex;
+  }
+  return resources;
+}
 
 /**
  * Makes a plan's values pass the object's validation rules and lookup filters for one save. A
@@ -551,6 +568,7 @@ function recordMethods(
     return {
       walk,
       body: [
+        ...settingInserts(plan, i2),
         ...newRecord(object, variable, recordFields(object, plan.set, required), i2, required),
         ...todos.map((t) => `${i2}${t}`),
         '',
@@ -582,6 +600,7 @@ function recordMethods(
     return {
       walk,
       body: [
+        ...settingInserts(plan, i2),
         ...newRecord(object, variable, recordFields(object, plan.prior, required), i2, required),
         `${i2}insert ${variable};`,
         '',
@@ -614,6 +633,7 @@ function recordMethods(
       ? flowChecks({ writes: [], customError: walk.customError }, object, variable, 'delete', i2)
       : undefined;
     return [
+      ...settingInserts(plan, i2),
       ...newRecord(object, variable, recordFields(object, plan.set, required), i2, required),
       ...todos.map((t) => `${i2}${t}`),
       `${i2}insert ${variable};`,
@@ -815,6 +835,7 @@ function platformEventMethod(flow: FlowMetadata, required: RequiredFieldMap, val
   return [
     `${INDENT}@IsTest`,
     `${INDENT}static void runsFlowOnEvent() {`,
+    ...settingInserts(plan, i2),
     ...newRecord(event, 'testEvent', recordFields(event, plan.set, required), i2, required).filter(
       (l) => !l.includes('TODO: set the required'),
     ),
@@ -1025,6 +1046,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     picklists: options.picklists ?? {},
     validationRules: options.validationRules ?? {},
     lookupFilters: options.lookupFilters ?? {},
+    resources: flowResources(flow),
   };
   const validate = (object: string, overrides: Map<string, string>): Map<string, string> =>
     validInsertFields(object, overrides, values, required);
