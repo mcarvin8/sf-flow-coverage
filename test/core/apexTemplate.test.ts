@@ -427,6 +427,46 @@ describe('generateApexTest assertions from the Flow', () => {
       expect(test.body).not.toContain('TODO: validation rule');
     });
 
+    it('gives parent records the values their lookup filters need', () => {
+      const options = {
+        requiredFields: { Job__c: { Account__c: 'null /* TODO */' }, Account: { Name: "'A'" } },
+        lookups: { Job__c: { Account__c: 'Account' } },
+        relationships: { Job__c: { Account__r: 'Account__c' } },
+        lookupFilters: {
+          Job__c: [
+            {
+              lookup: 'Account__c',
+              items: [{ field: 'Account.Type', operation: 'equals', value: 'Customer, Partner' }],
+              errorMessage: 'Pick a customer.',
+            },
+          ],
+        },
+      };
+      const test = generateApexTest(jobFlow(''), options);
+      expect(test.body).toContain(
+        "        Account accountParent = new Account(\n            Name = 'A',\n            Type = 'Customer'\n        );",
+      );
+
+      // A filter it can't meet becomes a TODO that names the lookup.
+      const blocked = generateApexTest(jobFlow(''), {
+        ...options,
+        lookupFilters: {
+          Job__c: [
+            {
+              lookup: 'Account__c',
+              items: [{ field: 'Account.Tags__c', operation: 'includes', value: 'Gold' }],
+              errorMessage: 'Gold  only.',
+            },
+          ],
+        },
+      });
+      expect(blocked.body).toContain('// TODO: lookup filter: Account__c (Gold only.)');
+
+      // Without a parent the test inserts, the filter doesn't apply.
+      const unset = generateApexTest(jobFlow(''), { ...options, requiredFields: { Account: { Name: "'A'" } } });
+      expect(unset.body).not.toContain('Type =');
+    });
+
     it('makes parent and input records pass their own rules', () => {
       const parentTest = generateApexTest(jobFlow(''), {
         requiredFields: { Job__c: { Account__c: 'null /* TODO */' }, Account: { Name: "'A'" } },

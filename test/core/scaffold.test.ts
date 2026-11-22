@@ -159,6 +159,34 @@ describe('scaffoldTests', () => {
     }
   });
 
+  it('reads the lookup filters of described lookups that have one', async () => {
+    const asked: Array<[string, string[]]> = [];
+    const reference = { type: 'reference', nillable: false, createable: true, defaultedOnCreate: false };
+    await scaffoldTests({
+      flowNames: ['Invoice_Before_Delete'],
+      projectDir: FIXTURE_PROJECT,
+      outputDir: out,
+      describe: async (object) =>
+        object === 'Invoice__c'
+          ? [
+              {
+                ...reference,
+                name: 'Account__c',
+                referenceTo: ['Account'],
+                relationshipName: 'Account__r',
+                filteredLookupInfo: {},
+              },
+            ]
+          : [{ name: 'Name', type: 'string', nillable: false, createable: true, defaultedOnCreate: false }],
+      lookupFilters: async (object, lookups) => {
+        asked.push([object, lookups]);
+        return [{ lookup: 'Account__c', items: [{ field: 'Account.Type', operation: 'equals', value: 'Customer' }] }];
+      },
+    });
+    expect(asked).toEqual([['Invoice__c', ['Account__c']]]);
+    expect(readFileSync(join(out, 'Invoice_Before_Delete_FlowTest.cls'), 'utf8')).toContain("Type = 'Customer'");
+  });
+
   it('reads the validation rules of each object it describes', async () => {
     const asked: string[] = [];
     await scaffoldTests({
