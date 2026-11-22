@@ -59,8 +59,10 @@ sf flowcov scaffold --uncovered --target-org prod
 sf flowcov gate --target-org ci-sandbox --from origin/main --to HEAD
 
 # 5. Publish Flow coverage to SonarQube next to your Apex coverage
-sf flowcov transform --target-org ci-sandbox --format sonar
+sf flowcov transform --target-org ci-sandbox --format sonar   # writes coverage/flow-coverage-sonar.xml
 ```
+
+For the Apex side of step 5, see [Alongside Apex coverage](#alongside-apex-coverage).
 
 ## How coverage is measured
 
@@ -146,6 +148,24 @@ Each executable element of a Flow becomes one line: the line of its `<name>` in 
 
 The command warns when a Flow file's elements don't match the version the org covered, since the line numbers would then point at the wrong elements.
 
+### Alongside Apex coverage
+
+Salesforce reports Flow coverage separately from Apex coverage: the code coverage JSON from `sf apex run test` has Apex classes and triggers only. For the Apex side, [apex-code-coverage-transformer](https://github.com/mcarvin8/apex-code-coverage-transformer) converts that JSON into the same formats. Run both and give your coverage tool both files:
+
+```bash
+sf apex run test --test-level RunLocalTests --code-coverage --result-format json --output-dir coverage --wait 60 --target-org ci-sandbox
+sf acc-transformer transform -j coverage/test-result-codecoverage.json -r coverage/apex-coverage-sonar.xml -f sonar
+sf flowcov transform --target-org ci-sandbox --format sonar   # writes coverage/flow-coverage-sonar.xml
+```
+
+Then list both reports, comma-separated, in `sonar-project.properties`:
+
+```properties
+sonar.coverageReportPaths=coverage/apex-coverage-sonar.xml,coverage/flow-coverage-sonar.xml
+```
+
+Codecov, GitLab, and Azure DevOps take several Cobertura or lcov files in the same way.
+
 ## CLI Command Reference
 
 <!-- commands -->
@@ -230,10 +250,9 @@ EXAMPLES
 
     $ sf flowcov gate --target-org ci-sandbox --from origin/main --content-check fail
 
-  Skip legacy Flows, and add the results to a GitHub Actions job summary:
+  Skip legacy Flows, and print the results as Markdown for a pull request comment or job summary:
 
-    $ sf flowcov gate --target-org ci-sandbox --from origin/main --exclude "Legacy_*" --output-format markdown >> \
-      "$GITHUB_STEP_SUMMARY"
+    $ sf flowcov gate --target-org ci-sandbox --from origin/main --exclude "Legacy_*" --output-format markdown
 
   Check named Flows without git:
 
