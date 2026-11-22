@@ -184,6 +184,31 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
       }
     });
 
+    it('prints Markdown with --output-format markdown', async () => {
+      orgFlows.value = [coverage('Other', { covered: false }), coverage('Uncovered', { covered: false })];
+      orgHasCoverage.value = false;
+      try {
+        const result = await FlowcovReadiness.run([
+          '--target-org',
+          testOrg.username,
+          '--project-dir',
+          out,
+          '--output-format',
+          'markdown',
+          '--fail-if-not-ready',
+        ]);
+        expect(result.ready).toBe(false);
+        expect(process.exitCode).toBe(1);
+        expect(ux.table.called).toBe(false);
+        expect(ux.warn.called).toBe(false);
+        expect(logged()).toContain('## Flow coverage readiness\n\n**Not ready**');
+        expect(logged()).toContain('> [!WARNING]\n> The org has no Flow coverage recorded for any Flow.');
+        expect(logged()).toContain('| `Uncovered` | AutoLaunchedFlow | 1 |');
+      } finally {
+        orgHasCoverage.value = true;
+      }
+    });
+
     it('prints no tables for an org without Flows', async () => {
       orgFlows.value = [];
       await FlowcovReadiness.run(['--target-org', testOrg.username, '--project-dir', out]);
@@ -274,6 +299,69 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
       ]);
       expect(result).toEqual({ passed: true, minElementCoverage: 0, flows: [], warnings: [] });
       expect(logged()).toContain('No Flows changed. Nothing to check.');
+    });
+
+    it('skips Flows excluded by .flowcovignore and --exclude', async () => {
+      orgFlows.value = [coverage('Good', { covered: false }), coverage('Bad', { covered: false })];
+      const project = new TempGitRepo();
+      try {
+        project.commit('base', { 'README.md': 'x' });
+        project.git('checkout', '-q', '-b', 'feature');
+        project.commit('flows', {
+          '.flowcovignore': 'good  # deferred\n',
+          'flows/Good.flow-meta.xml': flowXml(),
+          'flows/Bad.flow-meta.xml': flowXml(),
+        });
+        const args = ['--target-org', testOrg.username, '--from', 'main', '--project-dir', project.dir];
+        const ignored = await FlowcovGate.run(args);
+        expect(ignored.flows.map((f) => [f.flowName, f.status])).toEqual([
+          ['Good', 'skip'],
+          ['Bad', 'fail'],
+        ]);
+        expect(tableRows()).toContainEqual(
+          expect.objectContaining({ Reason: 'Excluded by .flowcovignore: good (deferred).' }),
+        );
+
+        const result = await FlowcovGate.run([...args, '--exclude', 'flows/Bad.*']);
+        expect(result.passed).toBe(true);
+        expect(result.flows.find((f) => f.flowName === 'Bad')?.reason).toBe('Excluded by --exclude: flows/Bad.*.');
+      } finally {
+        project.remove();
+      }
+    });
+
+    it('prints Markdown with --output-format markdown', async () => {
+      orgFlows.value = [coverage('Good'), coverage('Bad', { covered: false })];
+      const result = await FlowcovGate.run([
+        '--target-org',
+        testOrg.username,
+        '--flow',
+        'Good',
+        '--flow',
+        'Bad',
+        '--output-format',
+        'markdown',
+      ]);
+      expect(result.passed).toBe(false);
+      expect(process.exitCode).toBe(1);
+      expect(ux.table.called).toBe(false);
+      expect(ux.warn.called).toBe(false);
+      expect(logged()).toContain('## Flow coverage gate\n\n**Failed** for 1 of 2 Flow(s).');
+      expect(logged()).toContain('| `Bad` | FAIL | 0% |');
+
+      await FlowcovGate.run([
+        '--target-org',
+        testOrg.username,
+        '--from',
+        'feature',
+        '--to',
+        'feature',
+        '--project-dir',
+        repo.dir,
+        '--output-format',
+        'markdown',
+      ]);
+      expect(logged()).toContain('## Flow coverage gate\n\nNo Flows changed. Nothing to check.');
     });
 
     it('requires --from or --flow', async () => {
