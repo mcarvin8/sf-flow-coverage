@@ -87,7 +87,7 @@ Coverage is read from the target org, so in CI:
 2. Run Apex tests there with `sf apex run test --code-coverage`.
 3. Run the gate against that org.
 
-The gate checks the Flow's active version in the org (or its latest version if none is active), and prints that version in the result. It fails a Flow when the org has no active version of it, or a newer inactive one: both usually mean the branch was deployed inactive. With `--from`, it also compares each changed Flow with the org's version and warns (or, with `--content-check fail`, fails) when the branch wasn't deployed. A Flow that fails `--min-element-coverage` names the elements no test runs.
+The gate checks the Flow's active version in the org (or its latest version if none is active), and prints that version in the result. It fails a Flow when the org has no active version of it, or a newer inactive one: both usually mean the branch was deployed inactive. With `--from`, it also compares each changed Flow with the org's version, down to the content of each element, and warns (or, with `--content-check fail`, fails) when the branch wasn't deployed. The warning names the elements that differ, such as `changed: decisions:Is_Big`. A Flow that fails `--min-element-coverage` names the elements no test runs.
 
 ### Excluding Flows
 
@@ -201,10 +201,11 @@ DESCRIPTION
   latest version. Both usually mean the branch was deployed inactive, so the org's coverage doesn't belong to the
   version in the pull request.
 
-  With --from, the gate also compares each changed Flow at --to with the org's version: process type, start trigger and
-  entry criteria, and the names of its elements and resources. A difference usually means the branch wasn't deployed to
-  the org. By default this is a warning; use --content-check to fail instead, or to skip the comparison. The comparison
-  doesn't look inside elements, so it can miss a change that only edits an existing element.
+  With --from, the gate also compares each changed Flow at --to with the org's version: its process type, start element
+  and entry criteria, Flow properties such as the API version and label, and each element and resource: which ones exist
+  and what each one contains, such as a decision's conditions or an assignment's values. Canvas positions and Flow
+  Builder's own settings are ignored. A difference usually means the branch wasn't deployed to the org. By default this
+  is a warning; use --content-check to fail instead, or to skip the comparison.
 
   To leave out Flows a team has chosen not to test yet, such as legacy Flows, list them in a `.flowcovignore` file in
   --project-dir or pass --exclude. Excluded Flows are skipped, with the pattern that matched them as the reason.

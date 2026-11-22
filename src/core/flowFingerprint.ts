@@ -17,6 +17,12 @@ export type FlowFingerprint = {
   filterFormula?: string;
   /** Elements and resources as `type:name`, sorted. */
   elements: string[];
+  /** Each element's and resource's content in canonical form, by `type:name`. */
+  bodies?: Record<string, string>;
+  /** The start element's content in canonical form. */
+  start?: string;
+  /** Flow-level properties (API version, label, run mode, and so on) in canonical form, by name. */
+  properties?: Record<string, string>;
 };
 
 type Rec = Record<string, unknown>;
@@ -111,6 +117,59 @@ function filterValue(value: unknown): string {
   return '';
 }
 
+/** Canvas positions, which moving an element changes without changing what the Flow does. */
+const LAYOUT_KEYS = new Set(['locationX', 'locationY']);
+
+/** Flow-level values that mean the same as leaving the property out. */
+const DEFAULT_PROPERTIES: Record<string, string> = { environments: 'Default', runInMode: 'DefaultMode' };
+
+/**
+ * Left out of `properties`: compared on their own (status by the gate's version checks), or
+ * Flow Builder's own settings, such as its canvas mode.
+ */
+const NOT_PROPERTIES = new Set(['processType', 'start', 'status', 'ends', 'processMetadataValues']);
+
+/** The start element without its entry criteria, which are compared on their own. */
+function startBody(start: Rec): Rec {
+  const { filters: _filters, filterFormula: _formula, filterLogic, ...rest } = start;
+  // With no logic given, filters are joined with AND.
+  return scalar(filterLogic)?.toLowerCase() === 'and' ? rest : { ...rest, filterLogic };
+}
+
+/**
+ * Content in one form for both the source XML and the Tooling API's JSON:
+ * - keys sorted, and every nested value a list, since XML shows a one-item list as the item;
+ * - values as strings with whitespace collapsed, numbers in their shortest form (5.0 is 5);
+ * - null, empty, and false values left out, since each side omits some defaults the other shows;
+ * - canvas positions left out;
+ * - connectors to end elements left out: the JSON adds `ends` elements (END_ELEMENT_1) and
+ *   connects to them where the XML has no connector.
+ */
+function canonical(value: unknown, ends: ReadonlySet<string>): unknown {
+  if (value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    const items = value.map((item) => canonical(item, ends)).filter((item) => item !== undefined);
+    return items.length > 0 ? items : undefined;
+  }
+  if (typeof value === 'object') {
+    const record = value as Rec;
+    if (typeof record.targetReference === 'string' && ends.has(record.targetReference)) return undefined;
+    const out: Rec = {};
+    for (const key of Object.keys(record).sort()) {
+      if (LAYOUT_KEYS.has(key)) continue;
+      const item = canonical(record[key], ends);
+      if (item !== undefined) out[key] = Array.isArray(item) ? item : [item];
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+  const text = String(value).replace(/\s+/g, ' ').trim();
+  if (text === '' || text === 'false') return undefined;
+  return /^-?\d+(\.\d+)?$/.test(text) ? String(Number(text)) : text;
+}
+
+const canonicalText = (value: unknown, ends: ReadonlySet<string>): string =>
+  JSON.stringify(canonical(value, ends) ?? null);
+
 function fingerprint(flow: Rec): FlowFingerprint {
   const start = asRecord(flow.start) ?? {};
   const filters = asRecords(start.filters)
@@ -122,6 +181,27 @@ function fingerprint(flow: Rec): FlowFingerprint {
       .filter((name): name is string => !!name)
       .map((name) => `${type}:${name}`),
   ).sort();
+  const ends = new Set(
+    asRecords(Array.isArray(flow.ends) ? flow.ends : [flow.ends])
+      .map((end) => scalar(end.name))
+      .filter((name): name is string => !!name),
+  );
+  const bodies: Record<string, string> = {};
+  for (const type of ELEMENT_TYPES) {
+    for (const element of asRecords(flow[type])) {
+      const name = scalar(element.name);
+      if (name) bodies[`${type}:${name}`] = canonicalText(element, ends);
+    }
+  }
+  const properties: Record<string, string> = {};
+  for (const key of Object.keys(flow)) {
+    if (NOT_PROPERTIES.has(key) || (ELEMENT_TYPES as readonly string[]).includes(key)) continue;
+    const value = canonical(flow[key], ends);
+    if (value === undefined) continue;
+    // A one-value list in the JSON is a single value in the XML.
+    const text = JSON.stringify(Array.isArray(value) && value.length === 1 ? value[0] : value);
+    if (text !== JSON.stringify(DEFAULT_PROPERTIES[key])) properties[key] = text;
+  }
   return {
     processType: scalar(flow.processType),
     triggerType: scalar(start.triggerType),
@@ -130,6 +210,9 @@ function fingerprint(flow: Rec): FlowFingerprint {
     filters,
     filterFormula: scalar(start.filterFormula)?.replace(/\s+/g, ' '),
     elements,
+    bodies,
+    start: canonicalText(startBody(start), ends),
+    properties,
   };
 }
 
@@ -167,6 +250,14 @@ export function compareFingerprints(source: FlowFingerprint, org: FlowFingerprin
   }
   if (source.filters.join('\n') !== org.filters.join('\n') || source.filterFormula !== org.filterFormula) {
     differences.push('start entry criteria differ');
+  } else if (source.start !== undefined && org.start !== undefined && source.start !== org.start) {
+    differences.push('the start element differs');
+  }
+  if (source.properties && org.properties) {
+    const { properties: a } = source;
+    const { properties: b } = org;
+    const changed = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((key) => a[key] !== b[key]).sort();
+    if (changed.length > 0) differences.push(`Flow properties differ: ${list(changed)}`);
   }
   const orgElements = new Set(org.elements);
   const sourceElements = new Set(source.elements);
@@ -174,5 +265,11 @@ export function compareFingerprints(source: FlowFingerprint, org: FlowFingerprin
   const onlyInOrg = [...orgElements].filter((e) => !sourceElements.has(e));
   if (onlyInSource.length > 0) differences.push(`only in source: ${list(onlyInSource)}`);
   if (onlyInOrg.length > 0) differences.push(`only in the org: ${list(onlyInOrg)}`);
+  if (source.bodies && org.bodies) {
+    const { bodies: a } = source;
+    const { bodies: b } = org;
+    const changed = source.elements.filter((e) => orgElements.has(e) && a[e] !== b[e]);
+    if (changed.length > 0) differences.push(`changed: ${list(changed)}`);
+  }
   return differences;
 }
