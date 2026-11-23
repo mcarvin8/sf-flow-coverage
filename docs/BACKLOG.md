@@ -85,7 +85,7 @@ Done: the describe now records each object's Id and lookup fields (for objects i
 
 ### 22. Query everything a Flow reads from input records
 
-Autolaunched Flows fail with "failed to access the value ... because it hasn't been set" when they read a field of an input record the test didn't query, such as a field through a relationship (`input.Lookup__r.Field__c`). Query every field and relationship field the Flow references on the input record.
+Done for fields read through a relationship (`input.Lookup__r.Field__c`): the test fills the lookups behind them with parent records it inserts (up to five deep), with a value in the field read, and `scaffold` describes the objects along the path. A path it can't fill gets a TODO. Still possible: a Flow that overwrites an input record with Get Records results that leave out a field it then reads, which is a problem in the Flow, not the test.
 
 ### 23. Record types: picklist values and availability
 
