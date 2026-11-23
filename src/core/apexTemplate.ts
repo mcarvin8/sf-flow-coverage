@@ -1382,7 +1382,12 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
           flow.object
             ? `TODO: this Flow runs for ${flow.object} records on a schedule; $Record is not set when started from Apex.`
             : 'TODO: this Flow runs on a schedule; it is started directly here.',
-          'If the Flow depends on $Record, move its logic to an autolaunched subflow and test that instead.',
+          flow.object
+            ? 'Apex has no way to set it, so anything that reads $Record fails (an email alert with "Missing required input parameter: SObjectRowId"):'
+            : 'If the Flow depends on $Record, move its logic to an autolaunched subflow and test that instead.',
+          ...(flow.object
+            ? ['move the logic to an autolaunched subflow that takes the record as an input, and test that instead.']
+            : []),
         ],
         required,
         false,

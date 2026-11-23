@@ -151,3 +151,22 @@ describe('Send Email recipients', () => {
     expect(body).toContain("inputs.put('toAddress', '[toAddress]'); // TODO: String");
   });
 });
+
+describe('schedule-triggered Flows on an object', () => {
+  it('explains that a test cannot set $Record, and what to do instead', () => {
+    const body = generateApexTest(
+      parseFlowXml(
+        'Nightly',
+        `<Flow><processType>AutoLaunchedFlow</processType><start><object>Job__c</object>
+          <schedule><frequency>Daily</frequency></schedule><triggerType>Scheduled</triggerType></start></Flow>`,
+      ),
+    ).body;
+    expect(body).toContain(
+      [
+        '        // TODO: this Flow runs for Job__c records on a schedule; $Record is not set when started from Apex.',
+        '        // Apex has no way to set it, so anything that reads $Record fails (an email alert with "Missing required input parameter: SObjectRowId"):',
+        '        // move the logic to an autolaunched subflow that takes the record as an input, and test that instead.',
+      ].join('\n'),
+    );
+  });
+});
