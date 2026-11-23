@@ -189,10 +189,21 @@ export type TransformResult = {
   warnings: string[];
 };
 
+/** Something a generated test leaves for a person (or an agent) to fill in. */
+export type ApexTodo = {
+  /** The test method it's in; none for the class header. */
+  method?: string;
+  /** What it's about, when the TODO says: `validation rule`, `lookup filter`, `record type`, and so on. */
+  kind?: string;
+  text: string;
+};
+
 export type ScaffoldedTest = {
   flowName: string;
   className: string;
   path: string;
+  /** The TODOs in the generated class. */
+  todos: ApexTodo[];
 };
 
 export type ScaffoldResult = {

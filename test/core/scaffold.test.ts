@@ -28,6 +28,7 @@ describe('scaffoldTests', () => {
         flowName: 'Account_After_Save',
         className: 'Account_After_Save_FlowTest',
         path: join(out, 'Account_After_Save_FlowTest.cls'),
+        todos: expect.any(Array),
       },
     ]);
     expect(result.skipped.map((s) => s.flowName)).toEqual(['Intake_Screen', 'Broken', 'Missing']);
