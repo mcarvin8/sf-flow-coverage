@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
 import { type ApprovalSubmit, approvalConflictNote, approvalSubmit, resubmitNote } from './approvals.js';
-import { entryCondition, fieldPaths } from './conditions.js';
+import { conditionFromValidationRule, entryCondition, fieldPaths } from './conditions.js';
 import type { ReadEmailAlerts } from './emailAlerts.js';
 import { flowFieldReferences, inaccessibleFields } from './fieldReferences.js';
 import { isCountedProcessType } from './flowTypes.js';
@@ -185,6 +185,54 @@ async function approvalSubmits(flowFiles: Map<string, string>): Promise<Approval
 const hasUpdateTest = (flow: FlowMetadata): boolean =>
   flowKind(flow) === 'record' && (flow.recordTriggerType === 'Update' || flow.recordTriggerType === 'CreateAndUpdate');
 
+/**
+ * Describes parent objects level by level: the given objects, the targets of their required
+ * lookups, and the objects along the Flows' relationship paths, up to `MAX_PARENT_DEPTH` levels.
+ */
+async function describeParents(
+  first: string[],
+  flows: Array<{ flow: FlowMetadata }>,
+  describe: DescribeObject,
+  objectFields: ObjectFields,
+): Promise<void> {
+  let level = first;
+  for (let depth = 1; depth <= MAX_PARENT_DEPTH && level.length > 0; depth++) {
+    const fresh = [...new Set(level)].filter((object) => !(object in objectFields.requiredFields));
+    await loadObjectFields(fresh, describe, objectFields);
+    level = [
+      ...grandparentObjects(fresh, objectFields),
+      ...criteriaPathObjects(
+        flows.map((f) => f.flow),
+        objectFields,
+      ),
+    ].filter((object) => !(object in objectFields.requiredFields));
+  }
+}
+
+/**
+ * Objects the validation rules' lookups point to: lookups a rule reads directly (`Project__c`) or
+ * through a relationship (`Project__r.Status__c`), on objects whose rules were read.
+ */
+function ruleParentObjects(rules: Record<string, ValidationRule[]>, fields: ObjectFields): string[] {
+  const objects: string[] = [];
+  for (const [start, list] of Object.entries(rules)) {
+    for (const rule of list) {
+      for (const path of fieldPaths(conditionFromValidationRule(rule.formula, 'insert'))) {
+        let object = start;
+        const hops = path.length === 1 ? path : path.slice(0, -1);
+        for (const [i, segment] of hops.entries()) {
+          const lookup = path.length === 1 ? segment : fields.relationships[object]?.[segment];
+          const target = lookup ? fields.lookups[object]?.[lookup] : undefined;
+          if (!target || !canInsertParent(target) || i >= MAX_PARENT_DEPTH) break;
+          objects.push(target);
+          object = target;
+        }
+      }
+    }
+  }
+  return objects;
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -245,7 +293,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       options.describe,
       objectFields,
     );
-    let level = [
+    const level = [
       ...parentObjects(
         flows.map((f) => f.flow),
         objectFields,
@@ -255,17 +303,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
         objectFields,
       ),
     ];
-    for (let depth = 1; depth <= MAX_PARENT_DEPTH && level.length > 0; depth++) {
-      const fresh = [...new Set(level)].filter((object) => !(object in objectFields.requiredFields));
-      await loadObjectFields(fresh, options.describe, objectFields);
-      level = [
-        ...grandparentObjects(fresh, objectFields),
-        ...criteriaPathObjects(
-          flows.map((f) => f.flow),
-          objectFields,
-        ),
-      ].filter((object) => !(object in objectFields.requiredFields));
-    }
+    await describeParents(level, flows, options.describe, objectFields);
   }
 
   // The other objects the Flows read or write, described only to learn which fields the running
@@ -278,10 +316,26 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
 
   const validationRules: Record<string, ValidationRule[]> = {};
   if (options.validationRules) {
-    // Sequential on purpose: one Tooling API query per object, then one per rule.
-    for (const object of Object.keys(objectFields.requiredFields)) {
-      const rules = await options.validationRules(object);
-      if (rules.length > 0) validationRules[object] = rules;
+    const read = new Set<string>();
+    const readRules = async (reader: ReadValidationRules): Promise<void> => {
+      // Sequential on purpose: one Tooling API query per object, then one per rule.
+      for (const object of Object.keys(objectFields.requiredFields)) {
+        if (read.has(object)) continue;
+        read.add(object);
+        const rules = await reader(object);
+        if (rules.length > 0) validationRules[object] = rules;
+      }
+    };
+    await readRules(options.validationRules);
+    // A rule can need a lookup filled ("a parent project or milestone"): describe the objects those
+    // lookups point to, so the test can insert one, and read their rules in turn.
+    for (let round = 1; options.describe && round <= MAX_PARENT_DEPTH; round++) {
+      const needed = ruleParentObjects(validationRules, objectFields).filter(
+        (object) => !(object in objectFields.requiredFields),
+      );
+      if (needed.length === 0) break;
+      await describeParents(needed, flows, options.describe, objectFields);
+      await readRules(options.validationRules);
     }
   }
   const lookupFilters: Record<string, LookupFilter[]> = {};

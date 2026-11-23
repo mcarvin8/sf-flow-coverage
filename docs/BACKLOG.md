@@ -93,8 +93,8 @@ Done for the record a test saves: the describe's record types (with `available` 
 
 ### 24. Validation rules that need parent records, and scheduled Flows on an object
 
-- A validation rule can require a lookup to be filled (for example "a parent project or milestone"). The objects those lookups point to aren't described, so the test can't insert the parent. Describe lookup targets the rules need.
-- A schedule-triggered Flow with an object fails with "Missing required input parameter: SObjectRowId" when started from Apex. Check whether passing a record's Id as `SObjectRowId` runs it for that record.
+- Done: a validation rule can require a lookup to be filled (for example "a parent project or milestone"). `scaffold` now describes the objects the rules' lookups point to (directly or through a relationship), reads their rules in turn, and the test fills the lookup with a parent record it inserts.
+- Checked in a scratch org: a schedule-triggered Flow with an object, started from Apex with `Flow.Interview`, runs (active or draft) but always with an empty `$Record`, and `SObjectRowId` isn't an input it accepts. "Missing required input parameter: SObjectRowId" comes from an email alert inside the Flow, whose record Id input is `{!$Record.Id}`. A test can't set `$Record`, so the generated test's TODO says to move the logic to an autolaunched subflow that takes the record as an input, and test that instead. Nothing more to build here.
 
 ## CI and reporting
 
