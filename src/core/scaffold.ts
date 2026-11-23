@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
+import { type ApprovalSubmit, approvalConflictNote, approvalSubmit } from './approvals.js';
 import { entryCondition, fieldPaths } from './conditions.js';
 import { flowFieldReferences, inaccessibleFields } from './fieldReferences.js';
 import { isCountedProcessType } from './flowTypes.js';
@@ -141,6 +142,23 @@ function criteriaPathObjects(flows: FlowMetadata[], fields: ObjectFields): strin
   return objects;
 }
 
+/**
+ * Every active Flow and process in the project that submits its record for approval. Read only
+ * when a Flow being scaffolded submits one, since it means reading every Flow file.
+ */
+async function approvalSubmits(flowFiles: Map<string, string>): Promise<ApprovalSubmit[]> {
+  const submits: ApprovalSubmit[] = [];
+  for (const [name, path] of flowFiles) {
+    try {
+      const submit = approvalSubmit(name, await readFile(path, 'utf8'));
+      if (submit) submits.push(submit);
+    } catch {
+      // A file that isn't a readable Flow submits nothing.
+    }
+  }
+  return submits;
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -160,7 +178,12 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
   const flowFiles = await findFlowFiles(options.projectDir);
   const result: ScaffoldResult = { created: [], skipped: [], inaccessibleFields: [] };
 
-  const flows: Array<{ flowName: string; flow: FlowMetadata; references: Map<string, Set<string>> }> = [];
+  const flows: Array<{
+    flowName: string;
+    flow: FlowMetadata;
+    references: Map<string, Set<string>>;
+    submit?: ApprovalSubmit;
+  }> = [];
   for (const flowName of [...new Set(options.flowNames)]) {
     const flowPath = flowFiles.get(flowName);
     if (!flowPath) {
@@ -169,10 +192,12 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     }
     let flow: FlowMetadata;
     let references: Map<string, Set<string>>;
+    let submit: ApprovalSubmit | undefined;
     try {
       const xml = await readFile(flowPath, 'utf8');
       flow = parseFlowXml(flowName, xml);
       references = flowFieldReferences(xml);
+      submit = approvalSubmit(flowName, xml);
     } catch (error) {
       result.skipped.push({ flowName, reason: (error as Error).message });
       continue;
@@ -184,7 +209,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       });
       continue;
     }
-    flows.push({ flowName, flow, references });
+    flows.push({ flowName, flow, references, submit });
   }
 
   const objectFields = emptyObjectFields();
@@ -236,7 +261,8 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     }
   }
 
-  for (const { flowName, flow, references } of flows) {
+  const submits = await approvalSubmits(flows.some((f) => f.submit) ? flowFiles : new Map());
+  for (const { flowName, flow, references, submit } of flows) {
     const hidden = inaccessibleFields(references, visible);
     for (const [object, fields] of Object.entries(hidden)) result.inaccessibleFields.push({ flowName, object, fields });
     const test = generateApexTest(flow, {
@@ -244,6 +270,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       validationRules,
       lookupFilters,
       inaccessibleFields: hidden,
+      approvalConflict: submit && approvalConflictNote(submit, submits),
     });
     const classPath = join(outputDir, `${test.className}.cls`);
     if (!options.force && (await exists(classPath))) {

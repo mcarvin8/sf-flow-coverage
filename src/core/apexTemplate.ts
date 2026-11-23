@@ -82,7 +82,12 @@ const camel = (name: string): string => {
   return cleaned.charAt(0).toLowerCase() + cleaned.slice(1);
 };
 
-function header(flow: FlowMetadata, description: string, inaccessible: Record<string, string[]>): string[] {
+function header(
+  flow: FlowMetadata,
+  description: string,
+  inaccessible: Record<string, string[]>,
+  approvalConflict: string[],
+): string[] {
   const hidden = Object.entries(inaccessible).map(([object, fields]) => ` *   ${object}: ${fields.join(', ')}`);
   return [
     '/**',
@@ -99,6 +104,7 @@ function header(flow: FlowMetadata, description: string, inaccessible: Record<st
           ' * due to fields being inaccessible". Grant access with a permission set assigned to that user.',
         ]
       : []),
+    ...(approvalConflict.length > 0 ? [' *', ...approvalConflict.map((line) => ` * ${line}`)] : []),
     ' */',
     '@IsTest',
   ];
@@ -969,6 +975,8 @@ export type GenerateOptions = {
    * header names them, since a Flow that touches them as a user who can't see them fails.
    */
   inaccessibleFields?: Record<string, string[]>;
+  /** Why the Flow's submit for approval may find the record already in a process, for the header. */
+  approvalConflict?: string[];
   /** Required fields per object from an org describe. Falls back to a built-in list for common standard objects. */
   requiredFields?: RequiredFieldMap;
   /** A value for every field the org describe can fill, per object. Used to meet `IsNull false` entry criteria. */
@@ -1235,7 +1243,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
   methods = [...methods, ...setupRecordHelpers(methods)];
   methods = withParentInserts(methods, lookups.parents, required, values.parentFields, validate);
   const body = [
-    ...header(flow, description, options.inaccessibleFields ?? {}),
+    ...header(flow, description, options.inaccessibleFields ?? {}, options.approvalConflict ?? []),
     `private class ${className} {`,
     ...methods,
     '}',
