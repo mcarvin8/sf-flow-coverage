@@ -1,6 +1,9 @@
 ---
 name: pull-request
 description: Open or update GitHub pull requests for sf-flow-coverage. Use when creating a PR, writing a PR title or description, or pushing a branch for review. Forbids Claude/AI attribution in PR text.
+# Maintenance skill for this repo: hidden from the skills CLI, which installs only flowcov-fix-tests.
+metadata:
+  internal: true
 ---
 
 # Pull requests in sf-flow-coverage

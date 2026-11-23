@@ -1,6 +1,9 @@
 ---
 name: commit
 description: Write and create git commits for sf-flow-coverage. Use whenever committing changes, writing a commit message, or amending a commit in this repo. Enforces Conventional Commits (commitlint) and forbids Claude/AI attribution trailers.
+# Maintenance skill for this repo: hidden from the skills CLI, which installs only flowcov-fix-tests.
+metadata:
+  internal: true
 ---
 
 # Committing in sf-flow-coverage

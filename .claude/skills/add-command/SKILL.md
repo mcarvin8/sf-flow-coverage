@@ -1,6 +1,9 @@
 ---
 name: add-command
 description: Add or change an `sf flowcov` command or flag in sf-flow-coverage. Use when creating a new subcommand (e.g. `sf flowcov transform`), adding a flag, or changing a command's output.
+# Maintenance skill for this repo: hidden from the skills CLI, which installs only flowcov-fix-tests.
+metadata:
+  internal: true
 ---
 
 # Adding a flowcov command
