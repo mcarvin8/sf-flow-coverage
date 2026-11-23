@@ -198,4 +198,9 @@ export type ScaffoldedTest = {
 export type ScaffoldResult = {
   created: ScaffoldedTest[];
   skipped: Array<{ flowName: string; reason: string }>;
+  /**
+   * Fields each Flow uses that the org describe doesn't show, so the user who ran scaffold can't
+   * see them. A Flow that touches them as such a user fails with "fields being inaccessible".
+   */
+  inaccessibleFields: Array<{ flowName: string; object: string; fields: string[] }>;
 };

@@ -76,6 +76,11 @@ export default class FlowcovScaffold extends SfCommand<ScaffoldResult> {
     const verb = flags['dry-run'] ? 'Would create' : 'Created';
     for (const test of result.created) this.log(`${verb} ${test.className} for ${test.flowName}: ${test.path}`);
     for (const skip of result.skipped) this.warn(`Skipped ${skip.flowName}: ${skip.reason}`);
+    for (const hidden of result.inaccessibleFields) {
+      this.warn(
+        `${hidden.flowName} uses ${hidden.object} fields you can't see: ${hidden.fields.join(', ')}. If the user who runs tests can't see them either, the test fails with "fields being inaccessible": grant access with a permission set.`,
+      );
+    }
     if (result.created.length === 0 && result.skipped.length === 0) this.log('No uncovered Flows to scaffold.');
     return result;
   }

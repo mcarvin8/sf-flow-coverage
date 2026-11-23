@@ -200,6 +200,8 @@ export type ObjectFields = {
   filteredLookups: Record<string, string[]>;
   /** What a new record holds in each field a test doesn't set, per object (see `unsetFieldValues`). */
   unsetValues: Record<string, Record<string, string | null>>;
+  /** Every field the describe shows, per object: the fields the running user can see. */
+  fieldNames: Record<string, string[]>;
 };
 
 /** A picklist's active values, and whether it rejects values not among them. */
@@ -228,6 +230,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   picklists: {},
   filteredLookups: {},
   unsetValues: {},
+  fieldNames: {},
 });
 
 /** Lookup targets a test points at an existing record instead of inserting one. */
@@ -332,6 +335,7 @@ export async function loadObjectFields(
     }
     if (fields) {
       into.requiredFields[object] = requiredFieldValues(fields);
+      into.fieldNames[object] = fields.map((f) => f.name);
       into.fieldValues[object] = settableFieldValues(fields);
       into.changedValues[object] = changedFieldValues(fields);
       into.lookups[object] = lookupTargets(fields);

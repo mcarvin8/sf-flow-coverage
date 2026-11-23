@@ -55,7 +55,7 @@ Found by running generated tests in a large real org. Each one makes generated t
 
 ### 16. Report inaccessible fields
 
-Tests fail with "Operation failed due to fields being inaccessible" when automation that runs in user mode touches fields the user running the tests can't access. The fix is on the org side: a permission set that grants access to those fields, assigned to the user who runs tests. Help by reporting which fields are affected, from the describe's field accessibility for the running user, in `readiness` or `scaffold`, instead of letting the tests fail without saying why.
+Done: `scaffold` collects the fields each Flow reads or writes (on `$Record`, record variables, Get Records results, and the records its elements filter, set, or query), describes any other objects they belong to, and warns about the fields the describe leaves out, which the running user can't see. The generated test lists them in a TODO at the top. The fix stays on the org side: a permission set that grants access, assigned to the user who runs tests.
 
 ### 17. Explain approval process conflicts
 
