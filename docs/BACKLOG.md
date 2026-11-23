@@ -59,7 +59,7 @@ Done: `scaffold` collects the fields each Flow reads or writes (on `$Record`, re
 
 ### 17. Explain approval process conflicts
 
-An update test's insert can already trigger automation that submits the record for approval, so when the Flow under test submits it too, the save fails with `ALREADY_IN_PROCESS`. Detect other Flows in the project that submit records of the same object on create, and add a TODO to the generated test that explains the conflict. Don't try to work around it: whether the insert should submit the record is the org's business rule.
+Done: when a record-triggered Flow submits its record for approval, `scaffold` reads the project's other active Flows and Process Builder processes, and the test gets a TODO naming any that submit the same object's records when they are created (and, for a create-and-update Flow, that the update test's insert already runs it on create). It doesn't work around the conflict: whether a new record should be submitted is the org's business rule. Not detected: approvals submitted by Apex triggers.
 
 ### 18. Realistic data for autolaunched Flows
 
