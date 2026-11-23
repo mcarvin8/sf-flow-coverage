@@ -492,6 +492,33 @@ EXAMPLES
 _See code: [src/commands/flowcov/transform.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/transform.ts)_
 <!-- commandsstop -->
 
+## AI coding agent skill
+
+Generated tests leave TODOs for what the command can't work out on its own. The `flowcov-fix-tests` [Agent Skill](https://agentskills.io) lets a coding agent work through them, in Claude Code, GitHub Copilot, or another agent that supports skills:
+
+1. Run `sf flowcov scaffold --json` and read each class's TODOs.
+2. Fill them in from the Flow's metadata, the validation rules, and the lookup filters.
+3. Deploy the tests to a sandbox or scratch org and run them.
+4. Fix failures caused by the test's data.
+5. Report what needs a change in the org instead, such as field access or a record type assignment.
+
+It works only in sandboxes and scratch orgs, and changes only the generated test classes.
+
+```sh
+# Claude Code (type these inside a Claude Code session)
+/plugin marketplace add mcarvin8/sf-flow-coverage
+/plugin install sf-flow-coverage@sf-flow-coverage
+
+# GitHub Copilot CLI
+copilot plugin marketplace add mcarvin8/sf-flow-coverage
+copilot plugin install sf-flow-coverage@sf-flow-coverage
+
+# Any agent, with the skills CLI
+npx skills add mcarvin8/sf-flow-coverage
+```
+
+Then ask your agent to "fix the generated Flow tests" or "work through the flowcov TODOs". The agent reads your org's metadata and test results, so use an AI tool your organization allows for that org's data.
+
 ## Programmatic API
 
 The core logic is exported for use in your own scripts:
