@@ -23,6 +23,7 @@ Most production orgs deploy Flows as inactive and activate them by hand, because
   - [Test scaffolding](#test-scaffolding)
   - [Coverage reports](#coverage-reports)
   - [CLI Command Reference](#cli-command-reference)
+  - [AI coding agent skill](#ai-coding-agent-skill)
   - [Programmatic API](#programmatic-api)
   - [Issues](#issues)
   - [License](#license)
