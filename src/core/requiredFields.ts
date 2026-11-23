@@ -202,6 +202,8 @@ export type ObjectFields = {
   unsetValues: Record<string, Record<string, string | null>>;
   /** Every field the describe shows, per object: the fields the running user can see. */
   fieldNames: Record<string, string[]>;
+  /** Id and lookup fields, per object: fields that only hold record Ids. */
+  referenceFields: Record<string, string[]>;
 };
 
 /** A picklist's active values, and whether it rejects values not among them. */
@@ -231,6 +233,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   filteredLookups: {},
   unsetValues: {},
   fieldNames: {},
+  referenceFields: {},
 });
 
 /** Lookup targets a test points at an existing record instead of inserting one. */
@@ -336,6 +339,7 @@ export async function loadObjectFields(
     if (fields) {
       into.requiredFields[object] = requiredFieldValues(fields);
       into.fieldNames[object] = fields.map((f) => f.name);
+      into.referenceFields[object] = fields.filter((f) => f.type === 'reference' || f.type === 'id').map((f) => f.name);
       into.fieldValues[object] = settableFieldValues(fields);
       into.changedValues[object] = changedFieldValues(fields);
       into.lookups[object] = lookupTargets(fields);
