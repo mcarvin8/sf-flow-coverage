@@ -1,6 +1,9 @@
 ---
 name: verify
 description: Build, lint, and test sf-flow-coverage. Use before committing, before opening a PR, after changing src/ or test/, or when asked to run the tests, check coverage, update snapshots, or run mutation testing.
+# Maintenance skill for this repo: hidden from the skills CLI, which installs only flowcov-fix-tests.
+metadata:
+  internal: true
 ---
 
 # Verifying changes
