@@ -213,11 +213,7 @@ function planCriteria(
   }
   plan = withRecipients(plan, flow, object, values, required, context);
   plan = withValidation(plan, object, values, required, context);
-  for (const [parent, fields] of plan.parents) {
-    const known = values.parentFields.get(parent) ?? new Map<string, string>();
-    for (const [field, value] of fields) if (!known.has(field)) known.set(field, value);
-    values.parentFields.set(parent, known);
-  }
+  keepParentFields(values, plan);
   return plan;
 }
 
@@ -367,6 +363,15 @@ function withValidation(
   return current;
 }
 
+/** Remembers the fields a plan sets on parent records, for when the test inserts them. */
+function keepParentFields(values: CriteriaValues, plan: CriteriaPlan): void {
+  for (const [parent, fields] of plan.parents) {
+    const known = values.parentFields.get(parent) ?? new Map<string, string>();
+    for (const [field, value] of fields) if (!known.has(field)) known.set(field, value);
+    values.parentFields.set(parent, known);
+  }
+}
+
 /** Fields a record inserted only to support the test (a parent, an input) needs to pass its object's rules. */
 function validInsertFields(
   object: string,
@@ -376,11 +381,7 @@ function validInsertFields(
 ): Map<string, string> {
   const plan = withValidation({ ...emptyPlan(), set: new Map(overrides) }, object, values, required, 'insert');
   // Fields its own lookup filters need on its parents (the test's grandparents).
-  for (const [parent, fields] of plan.parents) {
-    const known = values.parentFields.get(parent) ?? new Map<string, string>();
-    for (const [field, value] of fields) if (!known.has(field)) known.set(field, value);
-    values.parentFields.set(parent, known);
-  }
+  keepParentFields(values, plan);
   return plan.set;
 }
 
@@ -841,6 +842,31 @@ function idInputObject(
   return undefined;
 }
 
+/**
+ * Fills the lookups behind the fields a Flow reads through a relationship on an input record
+ * (`input.Account__r.Type`), with parent records the test inserts, so those fields hold a value:
+ * a Flow fails reading one through an empty lookup ("hasn't been set or assigned"). A path it can't
+ * fill becomes a TODO.
+ */
+function relatedReads(
+  flow: FlowMetadata,
+  variable: string,
+  object: string,
+  fields: Map<string, string>,
+  contextFor: (object: string) => SolveContext,
+): { plan: CriteriaPlan; todos: string[] } {
+  const ctx = contextFor(object);
+  let plan: CriteriaPlan = { ...emptyPlan(), set: new Map(fields) };
+  const todos: string[] = [];
+  for (const read of flow.recordReads?.[variable] ?? []) {
+    if (!read.includes('.')) continue;
+    const met = solveCriteria(conditionFromFormula(`NOT(ISBLANK({!$Record.${read}}))`), ctx, plan);
+    if (met.unmet.length === 0) plan = met;
+    else todos.push(`// TODO: fill ${variable}.${read}: the Flow reads it, and fails if it is empty`);
+  }
+  return { plan, todos };
+}
+
 /** A Get, Update, or Delete Records filter that compares an Id or lookup field with the variable. */
 function idComparison(
   flow: FlowMetadata,
@@ -903,6 +929,7 @@ function interviewMethod(
   validate: (object: string, overrides: Map<string, string>) => Map<string, string>,
   contextFor: (object: string) => SolveContext,
   referenceFields: Record<string, string[]>,
+  keepParents: (plan: CriteriaPlan) => void,
 ): string[] {
   const i2 = INDENT.repeat(2);
   const lines = [`${INDENT}@IsTest`, `${INDENT}static void ${name}() {`, ...notes.map((n) => `${i2}// ${n}`)];
@@ -920,14 +947,17 @@ function interviewMethod(
           return /^[A-Za-z]\w*$/.test(field) ? [[field, recipientValue(r.parameter, false)] as const] : [];
         }),
       );
+      const related = relatedReads(flow, variable.name, variable.objectType, addresses, contextFor);
+      keepParents(related.plan);
       lines.push(
         ...newRecord(
           variable.objectType,
           local,
-          recordFields(variable.objectType, validate(variable.objectType, addresses), required),
+          recordFields(variable.objectType, validate(variable.objectType, related.plan.set), required),
           i2,
           required,
         ),
+        ...related.todos.map((todo) => `${i2}${todo}`),
       );
       lines.push(`${i2}insert ${local};`);
       // A record from DML only holds the fields the test set; query the ones the Flow reads.
@@ -1341,6 +1371,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
         validate,
         contextFor,
         values.referenceFields,
+        (plan) => keepParentFields(values, plan),
       );
       break;
     case 'autolaunched':
@@ -1355,6 +1386,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
         validate,
         contextFor,
         values.referenceFields,
+        (plan) => keepParentFields(values, plan),
       );
       break;
     default:
