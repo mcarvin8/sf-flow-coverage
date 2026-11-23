@@ -7,7 +7,9 @@ import { findFlowFiles, readProjectConfig } from '../../src/core/projectFiles.js
 import { DEFAULT_APEX_API_VERSION, scaffoldTests } from '../../src/core/scaffold.js';
 import { FIXTURE_FLOWS, FIXTURE_PROJECT } from '../helpers.js';
 
-describe('scaffoldTests', () => {
+// Scaffolding the fixture project reads every Flow file and can take more than Vitest's default 5s
+// on slow CI runners (Windows especially).
+describe('scaffoldTests', { timeout: 30_000 }, () => {
   let out: string;
 
   beforeEach(() => {
