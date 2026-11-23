@@ -68,9 +68,11 @@ For the Apex side of step 5, see [Alongside Apex coverage](#alongside-apex-cover
 ## How coverage is measured
 
 - **What counts.** Active Flows with the process types Salesforce counts toward deploy-as-active: autolaunched Flows (including record-triggered, platform event and schedule-triggered Flows) and Process Builder processes. Screen Flows don't count.
+- **How Salesforce calculates it.** The percentage counts Flows, not elements: a Flow counts once any Apex test runs it. Salesforce divides the Flow versions with coverage (active ones, and the latest inactive versions that have a test) by the active versions without coverage plus the versions with coverage ([Deploy Processes and Flows as Active](https://help.salesforce.com/s/articleView?id=platform.flow_distribute_deploy_active.htm&type=5)). `readiness` calculates it the same way, and shows the active-only figure too when they differ. Element coverage is reported to show what's still untested, but it doesn't count toward the threshold.
+- **The threshold.** Production sets the percentage in Setup > Process Automation Settings, next to "Deploy processes and flows as active". `readiness` uses 75% unless you pass `--threshold`, and says so.
 - **Where it comes from.** Salesforce records which Flow versions each Apex test runs in the Tooling API `FlowTestCoverage` object when Apex tests run in the org. `readiness`, `gate`, and `transform` read it, so run your Apex tests before using them.
 - **Run tests with `--code-coverage`.** Without `--code-coverage`, `sf apex run test` skips coverage and Salesforce records no Flow coverage. Check-only deployments (`sf project deploy validate`) don't record it either. When no Flow in the org has any coverage, `readiness`, `gate`, and `transform` warn that this is the likely cause instead of just reporting 0%.
-- **Only Apex counts.** Flow Builder tests and Flow Test Mode (Winter '27) don't count toward the 75% requirement, so `scaffold` generates Apex tests, not Flow test metadata. The coverage source is pluggable, so if Salesforce starts counting Test Mode coverage it can be added without changing the commands.
+- **Only Apex counts.** Flow Builder tests and Flow Test Mode (Winter '27) don't count toward the requirement, so `scaffold` generates Apex tests, not Flow test metadata. The coverage source is pluggable, so if Salesforce starts counting Test Mode coverage it can be added without changing the commands.
 
 ## Readiness report
 
@@ -305,7 +307,7 @@ FLAGS
                                 <options: human|markdown>
       --since=<value>           Only count commits after this date: a date (2026-01-31) or "<n> days|weeks|months|years
                                 ago".
-      --threshold=<value>       [default: 75] Coverage percentage the org must reach.
+      --threshold=<value>       Coverage percentage the org must reach. Default: 75.
 
 GLOBAL FLAGS
   --flags-dir=<value>  Import flag values from a directory.
@@ -314,12 +316,15 @@ GLOBAL FLAGS
 DESCRIPTION
   Report how close the org is to the coverage needed to deploy Flows as active.
 
-  Salesforce requires 75% of active autolaunched Flows and processes to be run by at least one Apex test before you can
-  turn on "Deploy processes and flows as active". This command reads FlowTestCoverage from the target org, reports the
-  org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and,
-  for each covered Flow, the Apex tests that run it and the elements no test runs yet. Listing those elements takes one
-  Tooling API query per partly covered Flow. Process Builder processes are labeled and counted, with a suggestion to
-  migrate them to Flows, since Salesforce no longer supports Process Builder.
+  Before you can turn on "Deploy processes and flows as active", Salesforce requires a percentage of active autolaunched
+  Flows and processes to be run by at least one Apex test. Production sets that percentage in Process Automation
+  Settings; this command uses 75% unless you pass --threshold. A Flow counts once any test runs it, however many of its
+  elements run. Salesforce also counts the latest inactive versions that have a test, and this command does the same. It
+  reads FlowTestCoverage from the target org, reports the org-wide percentage against the threshold, and lists the
+  uncovered Flows (ranked by how often they change in git) and, for each covered Flow, the Apex tests that run it and
+  the elements no test runs yet. Listing those elements takes one Tooling API query per partly covered Flow. Process
+  Builder processes are labeled and counted, with a suggestion to migrate them to Flows, since Salesforce no longer
+  supports Process Builder.
 
   FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first with coverage turned on (for
   example, `sf apex run test --test-level RunLocalTests --code-coverage --wait 60`) so the report is current. Without
@@ -361,6 +366,11 @@ FLAG DESCRIPTIONS
     "human" prints tables and warnings to the terminal. "markdown" prints the report as one Markdown document, warnings
     included, for a pull request comment or a GitHub Actions job summary. Redirect it to a file, for example `>>
     "$GITHUB_STEP_SUMMARY"`. --json takes precedence over both.
+
+  --threshold=<value>  Coverage percentage the org must reach. Default: 75.
+
+    Production sets the percentage Salesforce requires in Setup > Process Automation Settings, next to "Deploy processes
+    and flows as active". Pass that number; without it, the report uses 75% and says so.
 ```
 
 _See code: [src/commands/flowcov/readiness.ts](https://github.com/mcarvin8/sf-flow-coverage/blob/main/src/commands/flowcov/readiness.ts)_

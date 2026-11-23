@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildReadinessReport } from '../../src/core/readiness.js';
+import { buildReadinessReport, coverageLines } from '../../src/core/readiness.js';
 import { coverage, fakeSource } from '../helpers.js';
 
 describe('buildReadinessReport', () => {
@@ -75,5 +75,75 @@ describe('buildReadinessReport', () => {
       flowsNeeded: 0,
       processBuilderProcesses: 0,
     });
+  });
+});
+
+describe('buildReadinessReport and Salesforce coverage', () => {
+  it('counts latest inactive versions with coverage the way Salesforce does', async () => {
+    // The example in Salesforce's help: one active version without a test, five active versions
+    // with one, and five latest inactive versions with one, so 10 of 11.
+    const flows = [coverage('A', { covered: false }), ...['F', 'G', 'H', 'I', 'J'].map((name) => coverage(name))];
+    const result = await buildReadinessReport({
+      source: { ...fakeSource(flows), countCoveredInactiveVersions: async () => 5 },
+      threshold: 95,
+    });
+    expect(result).toMatchObject({
+      coveragePercent: 83.3,
+      salesforceCoveragePercent: 90.9,
+      coveredInactiveVersions: 5,
+      thresholdAssumed: false,
+      ready: false,
+      // ceil(95% of 11) = 11, and 10 are covered.
+      flowsNeeded: 1,
+    });
+  });
+
+  it('says when it assumed the threshold, and counts nothing extra when the source can not tell', async () => {
+    const result = await buildReadinessReport({
+      source: { ...fakeSource([coverage('A')]), countCoveredInactiveVersions: async () => undefined },
+    });
+    expect(result).toMatchObject({
+      threshold: 75,
+      thresholdAssumed: true,
+      coveredInactiveVersions: 0,
+      salesforceCoveragePercent: 100,
+    });
+  });
+});
+
+describe('coverageLines', () => {
+  const base = {
+    threshold: 75,
+    thresholdAssumed: false,
+    totalFlows: 6,
+    coveredFlows: 5,
+    uncoveredFlows: 1,
+    coveragePercent: 83.3,
+    salesforceCoveragePercent: 83.3,
+    coveredInactiveVersions: 0,
+    ready: true,
+    flowsNeeded: 0,
+    processBuilderProcesses: 0,
+    warnings: [],
+    flows: [],
+  };
+
+  it('shows one line when no inactive version has coverage', () => {
+    expect(coverageLines(base)).toEqual([
+      'Flow coverage: 83.3% (5 of 6 active Flows and processes have a test). Threshold: 75%.',
+    ]);
+  });
+
+  it('shows how Salesforce counts inactive versions, and when the threshold was assumed', () => {
+    expect(
+      coverageLines(
+        { ...base, salesforceCoveragePercent: 90.9, coveredInactiveVersions: 5, thresholdAssumed: true },
+        (t) => `*${t}*`,
+      ),
+    ).toEqual([
+      'Flow coverage: *90.9%* as Salesforce calculates it (10 of 11 Flows: 5 active and 5 inactive with a test, 1 active without one). Threshold: 75%.',
+      'Active Flows with a test: 83.3% (5 of 6). Salesforce also counts the latest inactive versions that have a test.',
+      "75% is the usual requirement. Production's Process Automation Settings set the actual percentage: pass --threshold if it differs.",
+    ]);
   });
 });

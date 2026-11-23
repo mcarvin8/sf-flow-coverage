@@ -71,6 +71,12 @@ export type CoverageSource = {
    * Apex tests ran without code coverage on.
    */
   hasAnyFlowCoverage?(): Promise<boolean>;
+  /**
+   * How many Flows count toward the requirement although no version of them is active: the latest
+   * version is inactive and a test covers it. Salesforce counts these as covered. Undefined when
+   * the source can't tell.
+   */
+  countCoveredInactiveVersions?(): Promise<number | undefined>;
 };
 
 /** Runs a Tooling API SOQL query and returns every record (all pages). */
@@ -132,10 +138,23 @@ export type ReadinessFlow = {
 
 export type ReadinessResult = {
   threshold: number;
+  /** True when no threshold was given, so the usual 75% was used. Production can set another. */
+  thresholdAssumed: boolean;
+  /** Active counted Flows. */
   totalFlows: number;
+  /** Active counted Flows a test runs. */
   coveredFlows: number;
   uncoveredFlows: number;
+  /** Active Flows with a test, 0-100. */
   coveragePercent: number;
+  /**
+   * Coverage as Salesforce calculates it, 0-100: versions with coverage (active ones, and latest
+   * inactive ones) divided by active versions without coverage plus versions with coverage.
+   * `ready` and `flowsNeeded` go by this. Equals `coveragePercent` when no inactive version has coverage.
+   */
+  salesforceCoveragePercent: number;
+  /** Latest inactive versions with coverage, which Salesforce counts as covered. */
+  coveredInactiveVersions: number;
   ready: boolean;
   /** Additional Flows that need a test to reach the threshold. */
   flowsNeeded: number;

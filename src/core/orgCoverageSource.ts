@@ -1,5 +1,5 @@
 import { type FlowFingerprint, fingerprintFromMetadata } from './flowFingerprint.js';
-import { COUNTED_PROCESS_TYPES, qualifiedFlowName, splitFlowName } from './flowTypes.js';
+import { COUNTED_PROCESS_TYPES, isCountedProcessType, qualifiedFlowName, splitFlowName } from './flowTypes.js';
 import type { CoverageSource, FlowCoverage, FlowTestRef, ToolingQuery } from './types.js';
 
 type FlowRecord = {
@@ -113,6 +113,28 @@ export class OrgCoverageSource implements CoverageSource {
     } catch {
       // Without an answer, don't claim coverage is missing.
       return true;
+    }
+  }
+
+  public async countCoveredInactiveVersions(): Promise<number | undefined> {
+    try {
+      const rows = await this.query<{ FlowVersionId?: string }>('SELECT FlowVersionId FROM FlowTestCoverage');
+      const ids = [...new Set(rows.flatMap((r) => (r.FlowVersionId ? [r.FlowVersionId] : [])))];
+      const versions = await this.queryInChunks<{
+        Id: string;
+        Status?: string;
+        ProcessType?: string;
+        Definition?: { LatestVersionId?: string | null } | null;
+      }>(ids, (list) => `SELECT Id, Status, ProcessType, Definition.LatestVersionId FROM Flow WHERE Id IN (${list})`);
+      return versions.filter(
+        (v) =>
+          v.Status !== 'Active' &&
+          isCountedProcessType(v.ProcessType) &&
+          v.Definition?.LatestVersionId &&
+          idKey(v.Definition.LatestVersionId) === idKey(v.Id),
+      ).length;
+    } catch {
+      return undefined;
     }
   }
 
