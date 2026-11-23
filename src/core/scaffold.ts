@@ -10,6 +10,7 @@ import { isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
 import type { LookupFilter, ReadLookupFilters } from './lookupFilters.js';
 import { findFlowFiles, readProjectConfig } from './projectFiles.js';
+import { choosable, type ReadRecordTypePicklists, type RecordTypePicklists } from './recordTypes.js';
 import {
   canInsertParent,
   type DescribeObject,
@@ -41,6 +42,8 @@ export type ScaffoldOptions = {
   lookupFilters?: ReadLookupFilters;
   /** Reads email alert recipients, so the record gets the addresses an alert the Flow sends needs. */
   emailAlerts?: ReadEmailAlerts;
+  /** Reads the picklist values each record type allows, so a test picks a record type that allows its values. */
+  recordTypePicklists?: ReadRecordTypePicklists;
 };
 
 /** sObjects a generated test creates records of. */
@@ -291,6 +294,21 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
   }
 
   // Other automation matters to Flows that submit, and to the update tests of any Flow.
+  // Picklist values per record type, for objects whose tests may need a record type other than
+  // the default to save a restricted picklist value.
+  const recordTypePicklists: Record<string, Record<string, RecordTypePicklists>> = {};
+  if (options.recordTypePicklists) {
+    for (const [object, infos] of Object.entries(objectFields.recordTypeInfos)) {
+      const types = choosable(infos).filter((t) => t.available);
+      const restricted = Object.values(objectFields.picklists[object] ?? {}).some((p) => p.restricted);
+      if (types.length < 2 || !restricted) continue;
+      recordTypePicklists[object] = {};
+      for (const type of types) {
+        recordTypePicklists[object][type.developerName] = await options.recordTypePicklists(object, type.recordTypeId);
+      }
+    }
+  }
+
   const alertNames = [...new Set(flows.flatMap((f) => f.flow.graph?.emailAlerts ?? []))];
   const emailAlerts = options.emailAlerts && alertNames.length > 0 ? await options.emailAlerts(alertNames) : {};
 
@@ -303,6 +321,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       ...objectFields,
       validationRules,
       emailAlerts,
+      recordTypePicklists,
       lookupFilters,
       inaccessibleFields: hidden,
       approvalConflict: submit

@@ -111,6 +111,7 @@ describe('loadObjectFields', () => {
       unsetValues: { Installation__c: {} },
       fieldNames: { Installation__c: ['Crew_Size__c'] },
       referenceFields: { Installation__c: [] },
+      recordTypeInfos: {},
       relationships: { Installation__c: {} },
       recordTypes: {},
       readOnlyFields: { Installation__c: [] },

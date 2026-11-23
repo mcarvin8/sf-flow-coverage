@@ -21,6 +21,7 @@ import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './fl
 import { escapeApexString } from './flowXml.js';
 import { formulaToApex } from './formula.js';
 import { conditionFromLookupFilter, type LookupFilter } from './lookupFilters.js';
+import { type RecordTypeInfo, type RecordTypePicklists, withRecordType } from './recordTypes.js';
 import {
   canInsertParent,
   EXISTING_RECORD_IDS,
@@ -151,6 +152,10 @@ type CriteriaValues = {
   emailAlerts: Record<string, AlertRecipients>;
   /** Id and lookup fields per object, from the describe. */
   referenceFields: Record<string, string[]>;
+  /** Record types per object, as the running user sees them. */
+  recordTypeInfos: Record<string, RecordTypeInfo[]>;
+  /** Picklist values each record type allows, per object and record type developer name. */
+  recordTypePicklists: Record<string, Record<string, RecordTypePicklists>>;
   /** Required lookup filters per object. */
   lookupFilters: Record<string, LookupFilter[]>;
   /** Apex values of the Flow's constants and formula resources that have one, by name. */
@@ -213,6 +218,14 @@ function planCriteria(
   }
   plan = withRecipients(plan, flow, object, values, required, context);
   plan = withValidation(plan, object, values, required, context);
+  plan = withRecordType(
+    plan,
+    object,
+    values.recordTypeInfos[object] ?? [],
+    values.recordTypePicklists[object] ?? {},
+    values.picklists[object] ?? {},
+    context,
+  );
   keepParentFields(values, plan);
   return plan;
 }
@@ -1116,6 +1129,10 @@ export type GenerateOptions = {
   approvalConflict?: string[];
   /** Id and lookup fields per object, from the describe: they only take record Ids. */
   referenceFields?: Record<string, string[]>;
+  /** Record types per object, as the running user sees them, from the describe. */
+  recordTypeInfos?: Record<string, RecordTypeInfo[]>;
+  /** Picklist values each record type allows, per object and record type developer name. */
+  recordTypePicklists?: Record<string, Record<string, RecordTypePicklists>>;
   /** Required fields per object from an org describe. Falls back to a built-in list for common standard objects. */
   requiredFields?: RequiredFieldMap;
   /** A value for every field the org describe can fill, per object. Used to meet `IsNull false` entry criteria. */
@@ -1335,6 +1352,8 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     lookupFilters: options.lookupFilters ?? {},
     emailAlerts: options.emailAlerts ?? {},
     referenceFields: options.referenceFields ?? {},
+    recordTypeInfos: options.recordTypeInfos ?? {},
+    recordTypePicklists: options.recordTypePicklists ?? {},
     resources: flowResources(flow),
   };
   const validate = (object: string, overrides: Map<string, string>): Map<string, string> =>

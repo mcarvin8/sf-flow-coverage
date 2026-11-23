@@ -3,6 +3,7 @@ import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { emailAlertReader } from '../../core/emailAlerts.js';
 import { lookupFilterReader } from '../../core/lookupFilters.js';
 import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
+import { picklistValueReader } from '../../core/recordTypes.js';
 import { scaffoldTests } from '../../core/scaffold.js';
 import { describeObject, metadataRead, toolingQuery } from '../../core/toolingQuery.js';
 import type { ScaffoldResult } from '../../core/types.js';
@@ -73,6 +74,7 @@ export default class FlowcovScaffold extends SfCommand<ScaffoldResult> {
       validationRules: connection ? validationRuleReader(toolingQuery(connection)) : undefined,
       lookupFilters: connection ? lookupFilterReader(metadataRead(connection)) : undefined,
       emailAlerts: connection ? emailAlertReader(metadataRead(connection)) : undefined,
+      recordTypePicklists: connection ? picklistValueReader(connection) : undefined,
     });
 
     const verb = flags['dry-run'] ? 'Would create' : 'Created';
