@@ -1,6 +1,6 @@
 {
   "name": "sf-flow-coverage",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Fix and finish the Apex tests sf flowcov scaffold generates for Salesforce Flows: fill in their TODOs from the Flow metadata, run them in a sandbox or scratch org, and report what needs a change in the org.",
   "author": {
     "name": "Matt Carvin"
