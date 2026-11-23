@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.6.0...v0.7.0) (2026-11-23)
+
+
+### Features
+
+* **scaffold:** explain approval submits that conflict with other automation ([#41](https://github.com/mcarvin8/sf-flow-coverage/issues/41)) ([5e6ce6b](https://github.com/mcarvin8/sf-flow-coverage/commit/5e6ce6b6e5351483cccd7beffde1b6eb2833c602))
+* **scaffold:** give autolaunched Flow tests data that lets them run ([#38](https://github.com/mcarvin8/sf-flow-coverage/issues/38)) ([938ad3a](https://github.com/mcarvin8/sf-flow-coverage/commit/938ad3ac7ad992f31e1ecd1e41012a56a204217f))
+* **scaffold:** report fields a Flow uses that the user cannot see ([#40](https://github.com/mcarvin8/sf-flow-coverage/issues/40)) ([6dbc7f7](https://github.com/mcarvin8/sf-flow-coverage/commit/6dbc7f7f46872126be2edc6501b0396d53c37b13))
+
 ## [0.6.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.5.0...v0.6.0) (2026-11-22)
 
 
