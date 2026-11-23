@@ -93,7 +93,7 @@ Done for the record a test saves: the describe's record types (with `available` 
 
 ### 24. Validation rules that need parent records, and scheduled Flows on an object
 
-- A validation rule can require a lookup to be filled (for example "a parent project or milestone"). The objects those lookups point to aren't described, so the test can't insert the parent. Describe lookup targets the rules need.
+- Done: a validation rule can require a lookup to be filled (for example "a parent project or milestone"). `scaffold` now describes the objects the rules' lookups point to (directly or through a relationship), reads their rules in turn, and the test fills the lookup with a parent record it inserts.
 - A schedule-triggered Flow with an object fails with "Missing required input parameter: SObjectRowId" when started from Apex. Check whether passing a record's Id as `SObjectRowId` runs it for that record.
 
 ## CI and reporting
