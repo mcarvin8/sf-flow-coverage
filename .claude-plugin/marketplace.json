@@ -1,0 +1,14 @@
+{
+  "name": "sf-flow-coverage",
+  "description": "sf-flow-coverage: get Salesforce Flows ready to deploy as active.",
+  "owner": {
+    "name": "Matt Carvin"
+  },
+  "plugins": [
+    {
+      "name": "sf-flow-coverage",
+      "source": "./plugins/sf-flow-coverage",
+      "description": "Fix and finish the Apex tests sf flowcov scaffold generates for Salesforce Flows."
+    }
+  ]
+}
