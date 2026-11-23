@@ -24,6 +24,14 @@ The report also says whether "Deploy processes and flows as active" is already o
 
   <%= config.bin %> <%= command.id %> --target-org prod --fail-if-not-ready
 
+- Save the report as JSON:
+
+  <%= config.bin %> <%= command.id %> --target-org prod --json > readiness.json
+
+- Save the report as Markdown:
+
+  <%= config.bin %> <%= command.id %> --target-org prod --output-format markdown > readiness.md
+
 - Add the report to a GitHub Actions job summary:
 
   <%= config.bin %> <%= command.id %> --target-org prod --output-format markdown >> "$GITHUB_STEP_SUMMARY"

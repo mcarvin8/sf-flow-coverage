@@ -342,6 +342,14 @@ EXAMPLES
 
     $ sf flowcov readiness --target-org prod --fail-if-not-ready
 
+  Save the report as JSON:
+
+    $ sf flowcov readiness --target-org prod --json > readiness.json
+
+  Save the report as Markdown:
+
+    $ sf flowcov readiness --target-org prod --output-format markdown > readiness.md
+
   Add the report to a GitHub Actions job summary:
 
     $ sf flowcov readiness --target-org prod --output-format markdown >> "$GITHUB_STEP_SUMMARY"
