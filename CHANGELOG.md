@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.7.0...v0.8.0) (2026-11-23)
+
+
+### Features
+
+* **scaffold:** describe the parents validation rules need filled, and explain scheduled Flow tests ([#48](https://github.com/mcarvin8/sf-flow-coverage/issues/48)) ([3bd1c83](https://github.com/mcarvin8/sf-flow-coverage/commit/3bd1c83c9fdfe4ebc8fe6ee0c9b920435a73087b))
+* **scaffold:** explain approval resubmits in update tests of other Flows ([#42](https://github.com/mcarvin8/sf-flow-coverage/issues/42)) ([8289bd6](https://github.com/mcarvin8/sf-flow-coverage/commit/8289bd6d3b9d33f4af03a7fa7f749f2710e02890))
+* **scaffold:** fill the lookups behind fields a Flow reads from input records ([#46](https://github.com/mcarvin8/sf-flow-coverage/issues/46)) ([dc4d043](https://github.com/mcarvin8/sf-flow-coverage/commit/dc4d043832e2458a77294ae1056de285f651db84))
+* **scaffold:** give records the addresses their emails send to ([#44](https://github.com/mcarvin8/sf-flow-coverage/issues/44)) ([36dbad5](https://github.com/mcarvin8/sf-flow-coverage/commit/36dbad5494620635c797214e6155613ca63e92e8))
+* **scaffold:** keep placeholder text out of Id and lookup fields ([#45](https://github.com/mcarvin8/sf-flow-coverage/issues/45)) ([f719270](https://github.com/mcarvin8/sf-flow-coverage/commit/f719270cd14de6673002c1c49927140c24c65aca))
+* **scaffold:** pick a record type that allows the picklist values a test saves ([#47](https://github.com/mcarvin8/sf-flow-coverage/issues/47)) ([36a51dd](https://github.com/mcarvin8/sf-flow-coverage/commit/36a51ddddac8d3b07e224c97d9bb71212c9b83be))
+
 ## [0.7.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.6.0...v0.7.0) (2026-11-23)
 
 
