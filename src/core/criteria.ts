@@ -390,6 +390,28 @@ function parentSide(object: string, field: string, plan: CriteriaPlan, ctx: Solv
 /** Relationships a test can follow from the record: as many as it inserts parents deep. */
 const MAX_RELATIONSHIPS = MAX_PARENT_DEPTH;
 
+/** Relationships Salesforce fills with the running user when a record is inserted. */
+const SYSTEM_USER_LOOKUPS = new Set(['CreatedBy', 'LastModifiedBy', 'Owner']);
+
+/** Fields every user has a value in. */
+const USER_FIELDS_SET = new Set([
+  'Id',
+  'Name',
+  'Username',
+  'LastName',
+  'Email',
+  'Alias',
+  'ProfileId',
+  'IsActive',
+  'TimeZoneSidKey',
+  'LocaleSidKey',
+  'LanguageLocaleKey',
+  'EmailEncodingKey',
+]);
+
+/** Fields every record type has a value in. */
+const RECORD_TYPE_FIELDS = new Set(['Id', 'Name', 'DeveloperName', 'SobjectType']);
+
 /**
  * Meets an atom on a related record's field (`Account__r.Type`, `Contact__r.Account.Type`): the
  * record looks up a parent the test inserts, which looks up the next one, and the last one gets
@@ -403,9 +425,16 @@ function meetRelated(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean
   let object = ctx.object;
   let side = (name: string): Side => recordSide(name, plan, ctx);
   const visited = new Set<string>();
+  // `NOT(ISBLANK(...))`: the field only has to hold something.
+  const notBlank = atom.op === 'IsNull' && atom.right?.kind === 'value' && atom.right.apex === 'false' && !left.fn;
   for (let i = 0; i < hops.length; i++) {
     const relationship = hops[i];
-    if (relationship === 'RecordType' && i === hops.length - 1) {
+    const lastHop = i === hops.length - 1;
+    // Salesforce sets these to the running user on insert (the owner, unless the test sets one).
+    if (notBlank && lastHop && SYSTEM_USER_LOOKUPS.has(relationship)) return USER_FIELDS_SET.has(field);
+    // A record of an object with record types always has one.
+    if (notBlank && lastHop && relationship === 'RecordType') return RECORD_TYPE_FIELDS.has(field);
+    if (relationship === 'RecordType' && lastHop) {
       if (field !== 'DeveloperName' || atom.op !== 'EqualTo' || left.fn) return false;
       const name = atom.right?.kind === 'value' ? knownOf(atom.right.apex) : undefined;
       if (name?.kind !== 'string') return false;
@@ -417,6 +446,10 @@ function meetRelated(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean
     const lookup = links?.relationships[relationship];
     const parent = lookup ? links?.lookups[lookup] : undefined;
     const id = lookup ? (i === 0 ? ctx.fieldValues : ctx.parentFieldValues(object))[lookup] : undefined;
+    // A lookup to a user can point at the running user, whose standard fields are filled in.
+    if (notBlank && lastHop && lookup && parent === 'User' && id === 'UserInfo.getUserId()') {
+      return USER_FIELDS_SET.has(field) && side(lookup).assign(id);
+    }
     // A test inserts one record per parent object, so a chain can't pass through an object twice.
     if (!lookup || !parent || !id || !/Parent\.Id$/.test(id) || visited.has(parent)) return false;
     if (!side(lookup).assign(id)) return false;
@@ -424,6 +457,8 @@ function meetRelated(atom: Atom, plan: CriteriaPlan, ctx: SolveContext): boolean
     object = parent;
     side = (name) => parentSide(parent, name, plan, ctx);
   }
+  // A parent record the test inserts has an Id.
+  if (notBlank && field === 'Id') return true;
   const last = side(field);
   return meet(
     last,
