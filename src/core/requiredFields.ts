@@ -1,4 +1,5 @@
 import { escapeApexString } from './flowXml.js';
+import { type RecordTypeInfo, recordTypeInfos } from './recordTypes.js';
 
 /** The parts of an sObject describe field result needed to fill required fields. */
 export type DescribeField = {
@@ -204,6 +205,8 @@ export type ObjectFields = {
   fieldNames: Record<string, string[]>;
   /** Id and lookup fields, per object: fields that only hold record Ids. */
   referenceFields: Record<string, string[]>;
+  /** Record types per object, as the running user sees them. */
+  recordTypeInfos: Record<string, RecordTypeInfo[]>;
 };
 
 /** A picklist's active values, and whether it rejects values not among them. */
@@ -234,6 +237,7 @@ export const emptyObjectFields = (): ObjectFields => ({
   unsetValues: {},
   fieldNames: {},
   referenceFields: {},
+  recordTypeInfos: {},
 });
 
 /** Lookup targets a test points at an existing record instead of inserting one. */
@@ -335,6 +339,7 @@ export async function loadObjectFields(
     const fields = Array.isArray(result) ? result : result?.fields;
     if (result && !Array.isArray(result) && result.recordTypeInfos) {
       into.recordTypes[object] = result.recordTypeInfos.length;
+      into.recordTypeInfos[object] = recordTypeInfos(result.recordTypeInfos);
     }
     if (fields) {
       into.requiredFields[object] = requiredFieldValues(fields);

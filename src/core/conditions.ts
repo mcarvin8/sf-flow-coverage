@@ -44,7 +44,8 @@ export type ConditionLabel =
   | 'decision'
   | 'validation rule'
   | 'lookup filter'
-  | 'email recipient';
+  | 'email recipient'
+  | 'record type';
 
 export type Atom = {
   kind: 'atom';

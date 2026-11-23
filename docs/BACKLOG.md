@@ -89,7 +89,7 @@ Done for fields read through a relationship (`input.Lookup__r.Field__c`): the te
 
 ### 23. Record types: picklist values and availability
 
-Restricted picklist values can be valid for an object but not for the record type a test uses, which fails with "bad value for restricted picklist field". Pick a record type whose picklist values include the value (from the UI API's picklist values per record type), or leave a TODO. A record type the running user can't use fails with "this ID value isn't valid for the user": report it from the describe's `available` flag, as #16 does for fields.
+Done for the record a test saves: the describe's record types (with `available` and the running user's default) are kept, and for objects with two or more record types the user can use and a restricted picklist, `scaffold` reads each record type's picklist values from the UI API. When the restricted picklist values a test saves aren't allowed by the default record type, the test sets a record type that allows them (on insert); when none does, or the criteria name a record type the user can't use, the test gets a TODO. Not covered: parent and input records.
 
 ### 24. Validation rules that need parent records, and scheduled Flows on an object
 
