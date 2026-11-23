@@ -112,6 +112,19 @@ function header(
   ];
 }
 
+/** A 15- or 18-character record Id. */
+const RECORD_ID = /^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/;
+
+/**
+ * Whether a field only holds record Ids: an Id or lookup field by the describe or, for an object
+ * the describe doesn't cover, a standard Id or lookup field by its name (`Id`, `OwnerId`).
+ */
+function isIdField(referenceFields: Record<string, string[]>, object: string, field: string): boolean {
+  const known = referenceFields[object];
+  if (known) return field === 'Id' || known.some((name) => name.toLowerCase() === field.toLowerCase());
+  return /^[A-Za-z0-9]*Id$/.test(field);
+}
+
 /** Field values from the org describe that the criteria solver can draw on. */
 type CriteriaValues = {
   /** A value per settable field, including lookup Ids. */
@@ -136,6 +149,8 @@ type CriteriaValues = {
   validationRules: Record<string, ValidationRule[]>;
   /** Recipients of the email alerts the Flow sends, by alert full name. */
   emailAlerts: Record<string, AlertRecipients>;
+  /** Id and lookup fields per object, from the describe. */
+  referenceFields: Record<string, string[]>;
   /** Required lookup filters per object. */
   lookupFilters: Record<string, LookupFilter[]>;
   /** Apex values of the Flow's constants and formula resources that have one, by name. */
@@ -165,8 +180,12 @@ function criteriaContext(
       lookups: values.lookups[parent] ?? {},
     }),
     normalize: (target, field, apex) => {
-      const picklist = values.picklists[target]?.[field];
       const known = knownOf(apex);
+      // Text that isn't an Id fails on an Id field with "Invalid id".
+      if (isIdField(values.referenceFields, target, field) && known.kind === 'string' && !RECORD_ID.test(known.value)) {
+        return null;
+      }
+      const picklist = values.picklists[target]?.[field];
       if (!picklist || known.kind !== 'string') return apex;
       const match = picklist.values.find((v) => v.toLowerCase() === known.value.toLowerCase());
       if (match !== undefined) return `'${escapeApexString(match)}'`;
@@ -822,6 +841,17 @@ function idInputObject(
   return undefined;
 }
 
+/** A Get, Update, or Delete Records filter that compares an Id or lookup field with the variable. */
+function idComparison(
+  flow: FlowMetadata,
+  variable: string,
+  referenceFields: Record<string, string[]>,
+): { object: string; field: string } | undefined {
+  return (flow.graph?.idFilters ?? []).find(
+    (filter) => filter.variable === variable && isIdField(referenceFields, filter.object, filter.field),
+  );
+}
+
 /**
  * Records for the Flow's Delete Records elements to find. A delete that finds nothing fails the
  * Flow ("No records in Salesforce match your delete criteria"), so the test inserts a record that
@@ -872,6 +902,7 @@ function interviewMethod(
   lookups: Record<string, Record<string, string>>,
   validate: (object: string, overrides: Map<string, string>) => Map<string, string>,
   contextFor: (object: string) => SolveContext,
+  referenceFields: Record<string, string[]>,
 ): string[] {
   const i2 = INDENT.repeat(2);
   const lines = [`${INDENT}@IsTest`, `${INDENT}static void ${name}() {`, ...notes.map((n) => `${i2}// ${n}`)];
@@ -927,6 +958,17 @@ function interviewMethod(
       } else {
         lines.push(`${i2}inputs.put('${key}', null); // TODO: the Id of a ${object} record`);
       }
+    } else if (
+      !variable.isCollection &&
+      ['String', 'Text'].includes(variable.dataType) &&
+      idComparison(flow, variable.name, referenceFields)
+    ) {
+      // Compared with an Id or lookup field whose target the describe didn't give: placeholder
+      // text there fails with "invalid ID field", so pass nothing.
+      const filter = idComparison(flow, variable.name, referenceFields) as { object: string; field: string };
+      lines.push(
+        `${i2}inputs.put('${escapeApexString(variable.name)}', null); // TODO: the Id of the record ${filter.object}.${filter.field} points to`,
+      );
     } else {
       const type = variable.apexClass ?? variable.objectType ?? variable.dataType;
       const value = inputValue(variable, flow);
@@ -1042,6 +1084,8 @@ export type GenerateOptions = {
   inaccessibleFields?: Record<string, string[]>;
   /** Why the Flow's submit for approval may find the record already in a process, for the header. */
   approvalConflict?: string[];
+  /** Id and lookup fields per object, from the describe: they only take record Ids. */
+  referenceFields?: Record<string, string[]>;
   /** Required fields per object from an org describe. Falls back to a built-in list for common standard objects. */
   requiredFields?: RequiredFieldMap;
   /** A value for every field the org describe can fill, per object. Used to meet `IsNull false` entry criteria. */
@@ -1260,6 +1304,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     validationRules: options.validationRules ?? {},
     lookupFilters: options.lookupFilters ?? {},
     emailAlerts: options.emailAlerts ?? {},
+    referenceFields: options.referenceFields ?? {},
     resources: flowResources(flow),
   };
   const validate = (object: string, overrides: Map<string, string>): Map<string, string> =>
@@ -1295,11 +1340,22 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
         options.lookups ?? {},
         validate,
         contextFor,
+        values.referenceFields,
       );
       break;
     case 'autolaunched':
       description = 'Autolaunched (no trigger).';
-      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {}, validate, contextFor);
+      methods = interviewMethod(
+        flow,
+        'runsFlow',
+        [],
+        required,
+        true,
+        options.lookups ?? {},
+        validate,
+        contextFor,
+        values.referenceFields,
+      );
       break;
     default:
       description = `Process type ${flow.processType ?? 'unknown'}.`;

@@ -81,7 +81,7 @@ Record-triggered Flows fail with "0 recipients" when a Send Email action sends t
 
 ### 21. Keep placeholder text out of Id fields
 
-Tests fail with "Invalid id" when criteria compare an Id or lookup field with text and the solver sets that text on the field, or when a text input the Flow compares with a lookup field gets placeholder text because the describe couldn't tell what the lookup points to. Don't set text that isn't an Id on Id and lookup fields, and pass `null` with a TODO instead of placeholder text for such inputs. Treat a text input the Flow assigns to a record variable's `Id` as a record Id too, so updates of that variable don't fail with "the ID value in the variable must be populated".
+Done: the describe now records each object's Id and lookup fields (for objects it didn't cover, standard fields named like `Id` or `OwnerId` count). Criteria that compare one with text that isn't a record Id become a TODO instead of setting the text. A text input compared with an Id or lookup field whose target the describe didn't give gets `null` and a TODO instead of placeholder text. A text input the Flow assigns to a record variable's `Id` counts as that object's record Id, so the test inserts a record and passes its Id.
 
 ### 22. Query everything a Flow reads from input records
 

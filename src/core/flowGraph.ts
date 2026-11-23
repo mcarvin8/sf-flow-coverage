@@ -281,6 +281,24 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
       }
     }
   }
+  // An assignment of a variable to a record variable's Id (`contract.Id = {!recordId}`) also says
+  // which object's Id the variable holds.
+  const recordVariables = new Map<string, string>();
+  for (const variable of asArray(flow.variables)) {
+    const name = text(variable.name);
+    const object = text(variable.objectType);
+    if (name && object && text(variable.dataType) === 'SObject') recordVariables.set(name, object);
+  }
+  for (const assignment of asArray(flow.assignments)) {
+    for (const item of asArray(assignment.assignmentItems)) {
+      const [record, field, ...rest] = (text(item.assignToReference) ?? '').split('.');
+      const object = recordVariables.get(record);
+      const variable = text(asRecord(item.value)?.elementReference);
+      if (object && field === 'Id' && rest.length === 0 && variable && VARIABLE.test(variable)) {
+        idFilters.push({ variable, object, field: 'Id' });
+      }
+    }
+  }
 
   const formulas: Record<string, Expr> = {};
   for (const formula of asArray(flow.formulas)) {
