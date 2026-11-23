@@ -1,6 +1,7 @@
 import { describeElements } from './elementCoverage.js';
 import { deployAsActiveAdvice } from './flowSettings.js';
 import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from './flowTypes.js';
+import { coverageLines, ELEMENT_COVERAGE_NOTE } from './readiness.js';
 import type { FlowTestRef, GateResult, ReadinessResult } from './types.js';
 
 /** Output formats the `readiness` and `gate` commands print. */
@@ -47,12 +48,7 @@ export function readinessMarkdown(result: ReadinessResult): string {
   const status = result.ready
     ? '**Ready**: the org meets the coverage needed to deploy Flows as active.'
     : `**Not ready**: add Apex tests for ${result.flowsNeeded} more Flow(s) to reach ${result.threshold}%.`;
-  lines.push(
-    status,
-    '',
-    `Flow coverage: **${result.coveragePercent}%** (${result.coveredFlows} of ${result.totalFlows} active Flows and processes have a test). Threshold: ${result.threshold}%.`,
-    '',
-  );
+  lines.push(status, '', ...coverageLines(result, (text) => `**${text}**`).flatMap((line) => [line, '']));
 
   const warnings = [...result.warnings];
   if (result.deployAsActive !== undefined) {
@@ -114,6 +110,7 @@ export function readinessMarkdown(result: ReadinessResult): string {
         ]),
       ),
       '',
+      ELEMENT_COVERAGE_NOTE,
     );
   }
   return `${lines.join('\n').trimEnd()}\n`;

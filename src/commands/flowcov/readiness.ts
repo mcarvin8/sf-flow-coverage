@@ -2,11 +2,11 @@ import { Messages } from '@salesforce/core';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { describeElements } from '../../core/elementCoverage.js';
 import { deployAsActiveAdvice } from '../../core/flowSettings.js';
-import { DEFAULT_THRESHOLD, isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from '../../core/flowTypes.js';
+import { isProcessBuilder, PROCESS_BUILDER_ADVICE, processTypeLabel } from '../../core/flowTypes.js';
 import { getFlowChurn } from '../../core/git.js';
 import { OUTPUT_FORMATS, readinessMarkdown } from '../../core/markdown.js';
 import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
-import { buildReadinessReport } from '../../core/readiness.js';
+import { buildReadinessReport, coverageLines, ELEMENT_COVERAGE_NOTE } from '../../core/readiness.js';
 import { dataQuery, metadataRead, toolingQuery } from '../../core/toolingQuery.js';
 import type { ReadinessResult } from '../../core/types.js';
 
@@ -32,7 +32,7 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
     }),
     threshold: Flags.integer({
       summary: messages.getMessage('flags.threshold.summary'),
-      default: DEFAULT_THRESHOLD,
+      description: messages.getMessage('flags.threshold.description'),
       min: 0,
       max: 100,
     }),
@@ -74,9 +74,7 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
   }
 
   private logReport(result: ReadinessResult): void {
-    this.log(
-      `Flow coverage: ${result.coveragePercent}% (${result.coveredFlows} of ${result.totalFlows} active Flows and processes have a test). Threshold: ${result.threshold}%.`,
-    );
+    for (const line of coverageLines(result)) this.log(line);
     if (result.ready) {
       this.logSuccess('Ready: the org meets the coverage needed to deploy Flows as active.');
     } else {
@@ -118,6 +116,7 @@ export default class FlowcovReadiness extends SfCommand<ReadinessResult> {
           Tests: [...new Set(f.tests.map((t) => `${t.className}.${t.methodName}`))].join(', '),
         })),
       });
+      this.log(ELEMENT_COVERAGE_NOTE);
     }
 
     if (result.processBuilderProcesses > 0) {

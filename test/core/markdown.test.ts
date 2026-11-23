@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { gateMarkdown, readinessMarkdown } from '../../src/core/markdown.js';
+import { ELEMENT_COVERAGE_NOTE } from '../../src/core/readiness.js';
 import type { GateResult, ReadinessResult } from '../../src/core/types.js';
 
 const readiness = (overrides: Partial<ReadinessResult> = {}): ReadinessResult => ({
   threshold: 75,
+  thresholdAssumed: false,
   totalFlows: 2,
   coveredFlows: 1,
   uncoveredFlows: 1,
   coveragePercent: 50,
+  salesforceCoveragePercent: 50,
+  coveredInactiveVersions: 0,
   ready: false,
   flowsNeeded: 1,
   processBuilderProcesses: 0,
@@ -56,6 +60,8 @@ Flow coverage: **50%** (1 of 2 active Flows and processes have a test). Threshol
 | Flow | Element Coverage | Tests |
 | --- | --- | --- |
 | \`Account_Sync\` | 80% | \`Account_Test.syncs\` |
+
+${ELEMENT_COVERAGE_NOTE}
 `);
   });
 

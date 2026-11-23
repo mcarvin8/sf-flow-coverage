@@ -292,3 +292,42 @@ describe('OrgCoverageSource.getFlowFingerprint', () => {
     ).toBeUndefined();
   });
 });
+
+describe('OrgCoverageSource.countCoveredInactiveVersions', () => {
+  it('counts latest inactive versions of counted Flows that have coverage', async () => {
+    const C = '301000000000003AAA';
+    const D = '301000000000004AAA';
+    const E = '301000000000005AAA';
+    const { query, calls } = fakeQuery({
+      FlowTestCoverage: [
+        { FlowVersionId: A },
+        { FlowVersionId: A },
+        { FlowVersionId: B },
+        { FlowVersionId: C },
+        { FlowVersionId: D },
+        { FlowVersionId: E },
+        {},
+      ],
+      Flow: [
+        // Active: already counted as an active Flow.
+        { Id: A, Status: 'Active', ProcessType: 'AutoLaunchedFlow', Definition: { LatestVersionId: A } },
+        // Latest and inactive: counts.
+        { Id: B, Status: 'Obsolete', ProcessType: 'AutoLaunchedFlow', Definition: { LatestVersionId: B.slice(0, 15) } },
+        // Inactive, but a newer version exists.
+        { Id: C, Status: 'Obsolete', ProcessType: 'AutoLaunchedFlow', Definition: { LatestVersionId: D } },
+        // Latest and inactive, but a screen Flow.
+        { Id: D, Status: 'Draft', ProcessType: 'Flow', Definition: { LatestVersionId: D } },
+        // No definition.
+        { Id: E, Status: 'Draft', ProcessType: 'Workflow', Definition: null },
+      ],
+    });
+    expect(await new OrgCoverageSource(query).countCoveredInactiveVersions()).toBe(1);
+    expect(calls[0]).toBe('SELECT FlowVersionId FROM FlowTestCoverage');
+    expect(calls[1]).toContain('SELECT Id, Status, ProcessType, Definition.LatestVersionId FROM Flow WHERE Id IN (');
+  });
+
+  it("gives no count when it can't read coverage", async () => {
+    const failing = fakeQuery({ FlowTestCoverage: new Error('INSUFFICIENT_ACCESS') });
+    expect(await new OrgCoverageSource(failing.query).countCoveredInactiveVersions()).toBeUndefined();
+  });
+});

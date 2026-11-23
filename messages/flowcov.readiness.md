@@ -4,7 +4,7 @@ Report how close the org is to the coverage needed to deploy Flows as active.
 
 # description
 
-Salesforce requires 75% of active autolaunched Flows and processes to be run by at least one Apex test before you can turn on "Deploy processes and flows as active". This command reads FlowTestCoverage from the target org, reports the org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and, for each covered Flow, the Apex tests that run it and the elements no test runs yet. Listing those elements takes one Tooling API query per partly covered Flow. Process Builder processes are labeled and counted, with a suggestion to migrate them to Flows, since Salesforce no longer supports Process Builder.
+Before you can turn on "Deploy processes and flows as active", Salesforce requires a percentage of active autolaunched Flows and processes to be run by at least one Apex test. Production sets that percentage in Process Automation Settings; this command uses 75% unless you pass --threshold. A Flow counts once any test runs it, however many of its elements run. Salesforce also counts the latest inactive versions that have a test, and this command does the same. It reads FlowTestCoverage from the target org, reports the org-wide percentage against the threshold, and lists the uncovered Flows (ranked by how often they change in git) and, for each covered Flow, the Apex tests that run it and the elements no test runs yet. Listing those elements takes one Tooling API query per partly covered Flow. Process Builder processes are labeled and counted, with a suggestion to migrate them to Flows, since Salesforce no longer supports Process Builder.
 
 FlowTestCoverage is filled in when Apex tests run in the org. Run your Apex tests first with coverage turned on (for example, `sf apex run test --test-level RunLocalTests --code-coverage --wait 60`) so the report is current. Without `--code-coverage`, Salesforce records no Flow coverage. When no Flow in the org has any coverage recorded, the command warns that the tests most likely ran without `--code-coverage`.
 
@@ -46,7 +46,11 @@ Only count commits after this date: a date (2026-01-31) or "<n> days|weeks|month
 
 # flags.threshold.summary
 
-Coverage percentage the org must reach.
+Coverage percentage the org must reach. Default: 75.
+
+# flags.threshold.description
+
+Production sets the percentage Salesforce requires in Setup > Process Automation Settings, next to "Deploy processes and flows as active". Pass that number; without it, the report uses 75% and says so.
 
 # flags.fail-if-not-ready.summary
 
