@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.8.0...v0.9.0) (2026-11-23)
+
+
+### Features
+
+* add an agent skill that fixes the generated Flow tests ([#53](https://github.com/mcarvin8/sf-flow-coverage/issues/53)) ([3868850](https://github.com/mcarvin8/sf-flow-coverage/commit/3868850a7b471075b4df2f8b562af578ab410e5f))
+* **scaffold:** list each generated test's TODOs in the JSON output ([#52](https://github.com/mcarvin8/sf-flow-coverage/issues/52)) ([213a39d](https://github.com/mcarvin8/sf-flow-coverage/commit/213a39d4ecf9f0302b2f2b6a7db5968751c0260b))
+
+
+### Bug Fixes
+
+* **scaffold:** stop asking to fill related fields that are always set ([#50](https://github.com/mcarvin8/sf-flow-coverage/issues/50)) ([0277685](https://github.com/mcarvin8/sf-flow-coverage/commit/0277685fdff1bd438f87097f0dd985858bb56e78))
+
 ## [0.8.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.7.0...v0.8.0) (2026-11-23)
 
 
