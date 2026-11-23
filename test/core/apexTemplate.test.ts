@@ -569,7 +569,7 @@ describe('generateApexTest assertions from the Flow', () => {
     expect(test.body).toContain("insert accountIdRecord;\n        inputs.put('accountId', accountIdRecord.Id);");
     expect(test.body).toContain("inputs.put('ownerId', UserInfo.getUserId());");
     expect(test.body).toContain("inputs.put('otherId', null); // TODO: the Id of a Other__c record");
-    expect(test.body).toContain("inputs.put('plain', 'test'); // TODO: String");
+    expect(test.body).toContain("inputs.put('plain', '[plain]'); // TODO: String");
     expect(test.body).toContain(
       "insert jobInput;\n        jobInput = [SELECT Id, Account__r.Name, Status__c FROM Job__c WHERE Id = :jobInput.Id];\n        inputs.put('job', jobInput);",
     );

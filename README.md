@@ -121,7 +121,7 @@ The exit code is the same as with the default output, and `--json` takes precede
 | Flow type | Generated test |
 | --- | --- |
 | Record-triggered (create, update, delete) | Builds a record of the trigger object that meets the entry criteria, inserts, updates, or deletes it, and asserts what the Flow does (see below). Create-and-update Flows get one test method for each. |
-| Autolaunched (no trigger) | Starts the Flow with `Flow.Interview.createInterview`, with a placeholder for every input variable, and asserts the output variables it is certain to set. |
+| Autolaunched (no trigger) | Starts the Flow with `Flow.Interview.createInterview`, with a placeholder for every input variable (a different one for each text input, an address for each input a Send Email action sends to), inserts a record for each Delete Records element to find, and asserts the output variables it is certain to set. |
 | Platform event | Publishes the event and delivers it with `Test.getEventBus().deliver()`. |
 | Schedule-triggered | Starts the Flow directly, since Apex tests can't fire the schedule. |
 | Process Builder | A placeholder test to fill in. |

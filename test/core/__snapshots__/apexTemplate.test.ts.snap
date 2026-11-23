@@ -161,7 +161,7 @@ private class Calculate_Discount_FlowTest {
         inputs.put('widget', widgetInput);
         inputs.put('codes', new List<String>()); // TODO: String collection
         inputs.put('wrappers', null); // TODO: DiscountWrapper collection
-        inputs.put('tier', 'test'); // TODO: Picklist
+        inputs.put('tier', '[tier]'); // TODO: Picklist
         inputs.put('isVip', false); // TODO: Boolean
         inputs.put('quantity', 0); // TODO: Number
         inputs.put('startDate', Date.today()); // TODO: Date

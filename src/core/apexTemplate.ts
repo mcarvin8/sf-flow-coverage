@@ -1,4 +1,11 @@
-import { conditionFromValidationRule, entryCondition, evaluateCondition, knownOf, negate } from './conditions.js';
+import {
+  conditionFromFilters,
+  conditionFromValidationRule,
+  entryCondition,
+  evaluateCondition,
+  knownOf,
+  negate,
+} from './conditions.js';
 import { type CriteriaPlan, emptyPlan, type SolveContext, solveCriteria } from './criteria.js';
 import {
   type FieldState,
@@ -663,7 +670,25 @@ function recordMethods(
   }
 }
 
-function inputValue(variable: FlowVariable): string {
+/** An address a test can send to: Apex tests never deliver email. */
+const TEST_EMAIL = "'flowtest@example.com'";
+
+/** The value for something a Send Email action sends to: an address, or the running user. */
+function recipientValue(parameter: string, collection: boolean): string {
+  if (parameter === 'recipientId') return 'UserInfo.getUserId()';
+  return collection ? `new List<String>{ ${TEST_EMAIL} }` : TEST_EMAIL;
+}
+
+/**
+ * The placeholder value a test passes for an input variable. Each text input gets its own value,
+ * so no input holds another's (a Flow that splits one input on another, both `'test'`, would loop
+ * until the CPU limit). Inputs a Send Email action sends to get an address instead.
+ */
+function inputValue(variable: FlowVariable, flow?: FlowMetadata): string {
+  const recipient = flow?.graph?.emailRecipients?.find((r) => r.reference === variable.name);
+  if (recipient && !['SObject', 'Apex'].includes(variable.dataType)) {
+    return recipientValue(recipient.parameter, variable.isCollection);
+  }
   if (variable.isCollection) {
     const element: Record<string, string> = {
       String: 'String',
@@ -683,7 +708,8 @@ function inputValue(variable: FlowVariable): string {
     case 'String':
     case 'Picklist':
     case 'Multipicklist':
-      return "'test'";
+      // Brackets keep one placeholder from containing another (`[a]` isn't in `[ab]`).
+      return `'[${escapeApexString(variable.name)}]'`;
     case 'Boolean':
       return 'false';
     case 'Number':
@@ -715,6 +741,47 @@ function idInputObject(
   return undefined;
 }
 
+/**
+ * Records for the Flow's Delete Records elements to find. A delete that finds nothing fails the
+ * Flow ("No records in Salesforce match your delete criteria"), so the test inserts a record that
+ * meets each delete's filters, comparing with the inputs it passes. A delete with a fault path,
+ * or one that finds its record by Id (an input the test already fills), is left alone.
+ */
+function deleteMatches(
+  flow: FlowMetadata,
+  passed: Map<string, string>,
+  required: RequiredFieldMap,
+  validate: (object: string, overrides: Map<string, string>) => Map<string, string>,
+  contextFor: (object: string) => SolveContext,
+  indent: string,
+): string[] {
+  const lines: string[] = [];
+  for (const del of flow.graph?.deletes ?? []) {
+    if (del.mayFail || del.filters.some((f) => f.field === 'Id')) continue;
+    const base = contextFor(del.object);
+    const ctx: SolveContext = { ...base, resource: (name) => passed.get(name) ?? base.resource?.(name) };
+    const plan = solveCriteria(conditionFromFilters(del.filters, del.filterLogic), ctx);
+    if (plan.unmet.length > 0) {
+      const unmet = plan.unmet.map((u) => u.text).join('; ');
+      lines.push(`${indent}// TODO: insert a ${del.object} record for ${del.element} to delete: ${unmet}`);
+      continue;
+    }
+    const local = `${camel(del.element) || 'record'}Match`;
+    lines.push(
+      `${indent}// ${del.element} fails when it finds nothing to delete.`,
+      ...newRecord(
+        del.object,
+        local,
+        recordFields(del.object, validate(del.object, plan.set), required),
+        indent,
+        required,
+      ),
+      `${indent}insert ${local};`,
+    );
+  }
+  return lines;
+}
+
 function interviewMethod(
   flow: FlowMetadata,
   name: string,
@@ -723,18 +790,29 @@ function interviewMethod(
   walkOutputs: boolean,
   lookups: Record<string, Record<string, string>>,
   validate: (object: string, overrides: Map<string, string>) => Map<string, string>,
+  contextFor: (object: string) => SolveContext,
 ): string[] {
   const i2 = INDENT.repeat(2);
   const lines = [`${INDENT}@IsTest`, `${INDENT}static void ${name}() {`, ...notes.map((n) => `${i2}// ${n}`)];
   lines.push(`${i2}Map<String, Object> inputs = new Map<String, Object>();`);
+  const recipients = flow.graph?.emailRecipients ?? [];
+  /** The Apex value passed for each simple input, for filters that compare with one. */
+  const passed = new Map<string, string>();
   for (const variable of flow.variables.filter((v) => v.isInput)) {
     if (variable.dataType === 'SObject' && variable.objectType && !variable.isCollection) {
       const local = `${camel(variable.name) || 'input'}Input`;
+      // Fields of the record a Send Email action sends to get an address.
+      const addresses = new Map(
+        recipients.flatMap((r) => {
+          const field = r.reference.startsWith(`${variable.name}.`) ? r.reference.slice(variable.name.length + 1) : '';
+          return /^[A-Za-z]\w*$/.test(field) ? [[field, recipientValue(r.parameter, false)] as const] : [];
+        }),
+      );
       lines.push(
         ...newRecord(
           variable.objectType,
           local,
-          recordFields(variable.objectType, validate(variable.objectType, new Map()), required),
+          recordFields(variable.objectType, validate(variable.objectType, addresses), required),
           i2,
           required,
         ),
@@ -770,11 +848,15 @@ function interviewMethod(
       }
     } else {
       const type = variable.apexClass ?? variable.objectType ?? variable.dataType;
-      lines.push(
-        `${i2}inputs.put('${escapeApexString(variable.name)}', ${inputValue(variable)}); // TODO: ${type}${variable.isCollection ? ' collection' : ''}`,
-      );
+      const value = inputValue(variable, flow);
+      if (value !== 'null') passed.set(variable.name, value);
+      const note = recipients.some((r) => r.reference === variable.name)
+        ? 'a Send Email action sends to it'
+        : `TODO: ${type}${variable.isCollection ? ' collection' : ''}`;
+      lines.push(`${i2}inputs.put('${escapeApexString(variable.name)}', ${value}); // ${note}`);
     }
   }
+  lines.push(...deleteMatches(flow, passed, required, validate, contextFor, i2));
   lines.push(
     '',
     `${i2}Test.startTest();`,
@@ -812,7 +894,7 @@ function outputValues(flow: FlowMetadata): Map<string, VariableWrite> {
   for (const variable of flow.variables.filter((v) => v.isInput)) {
     if (variable.dataType === 'SObject' && variable.objectType) inputObjects.add(variable.objectType);
     else if (!variable.isCollection) {
-      const value = inputValue(variable);
+      const value = inputValue(variable, flow);
       state.set(variable.name, value === 'null' ? null : value);
     }
   }
@@ -1091,6 +1173,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
   };
   const validate = (object: string, overrides: Map<string, string>): Map<string, string> =>
     validInsertFields(object, overrides, values, required);
+  const contextFor = (object: string): SolveContext => criteriaContext(object, values, required, 'insert');
   const className = apexTestClassName(flow.name);
   const kind = flowKind(flow);
   let description: string;
@@ -1120,11 +1203,12 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
         false,
         options.lookups ?? {},
         validate,
+        contextFor,
       );
       break;
     case 'autolaunched':
       description = 'Autolaunched (no trigger).';
-      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {}, validate);
+      methods = interviewMethod(flow, 'runsFlow', [], required, true, options.lookups ?? {}, validate, contextFor);
       break;
     default:
       description = `Process type ${flow.processType ?? 'unknown'}.`;
