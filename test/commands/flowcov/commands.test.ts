@@ -17,6 +17,7 @@ import { coverage, FIXTURE_PROJECT } from '../../helpers.js';
 const orgFlows = vi.hoisted(() => ({ value: [] as FlowCoverage[] }));
 const orgFingerprints = vi.hoisted(() => ({ value: {} as Record<string, FlowFingerprint> }));
 const orgHasCoverage = vi.hoisted(() => ({ value: true }));
+const orgDescribes = vi.hoisted(() => ({ value: {} as Record<string, Array<Record<string, unknown>>> }));
 const orgSettings = vi.hoisted(() => ({ deployAsActive: undefined as boolean | undefined, isSandbox: false }));
 
 vi.mock('../../../src/core/toolingQuery.js', async (importOriginal) => ({
@@ -26,6 +27,7 @@ vi.mock('../../../src/core/toolingQuery.js', async (importOriginal) => ({
       ? undefined
       : { enableFlowDeployAsActiveEnabled: orgSettings.deployAsActive },
   dataQuery: () => async () => [{ IsSandbox: orgSettings.isSandbox }],
+  describeObject: () => async (object: string) => orgDescribes.value[object],
 }));
 
 vi.mock('../../../src/core/orgCoverageSource.js', () => ({
@@ -475,6 +477,31 @@ describe('flowcov commands', { timeout: 30_000 }, () => {
       ]);
       expect(result.created.map((c) => c.flowName)).toEqual(['Nightly_Cleanup']);
       expect(logged()).toContain('Would create Nightly_Cleanup_FlowTest');
+    });
+
+    it("warns about fields the Flow uses that the user can't see", async () => {
+      orgDescribes.value = {
+        Case: [{ name: 'Priority', type: 'picklist', nillable: true, createable: true, defaultedOnCreate: false }],
+      };
+      try {
+        const result = await FlowcovScaffold.run([
+          '--flow',
+          'Case_Update',
+          '--target-org',
+          testOrg.username,
+          '--project-dir',
+          FIXTURE_PROJECT,
+          '--output-dir',
+          out,
+        ]);
+        expect(result.inaccessibleFields).toEqual([
+          { flowName: 'Case_Update', object: 'Case', fields: ['IsEscalated'] },
+        ]);
+        expect(logged()).toContain("Case_Update uses Case fields you can't see: IsEscalated.");
+        expect(readFileSync(join(out, 'Case_Update_FlowTest.cls'), 'utf8')).toContain(' *   Case: IsEscalated');
+      } finally {
+        orgDescribes.value = {};
+      }
     });
 
     it('says so when nothing is uncovered', async () => {

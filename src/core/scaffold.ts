@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
 import { entryCondition, fieldPaths } from './conditions.js';
+import { flowFieldReferences, inaccessibleFields } from './fieldReferences.js';
 import { isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
 import type { LookupFilter, ReadLookupFilters } from './lookupFilters.js';
@@ -157,9 +158,9 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     join(options.projectDir, project.defaultPackagePath ?? 'force-app', 'main', 'default', 'classes');
   const apiVersion = project.sourceApiVersion ?? DEFAULT_APEX_API_VERSION;
   const flowFiles = await findFlowFiles(options.projectDir);
-  const result: ScaffoldResult = { created: [], skipped: [] };
+  const result: ScaffoldResult = { created: [], skipped: [], inaccessibleFields: [] };
 
-  const flows: Array<{ flowName: string; flow: FlowMetadata }> = [];
+  const flows: Array<{ flowName: string; flow: FlowMetadata; references: Map<string, Set<string>> }> = [];
   for (const flowName of [...new Set(options.flowNames)]) {
     const flowPath = flowFiles.get(flowName);
     if (!flowPath) {
@@ -167,8 +168,11 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       continue;
     }
     let flow: FlowMetadata;
+    let references: Map<string, Set<string>>;
     try {
-      flow = parseFlowXml(flowName, await readFile(flowPath, 'utf8'));
+      const xml = await readFile(flowPath, 'utf8');
+      flow = parseFlowXml(flowName, xml);
+      references = flowFieldReferences(xml);
     } catch (error) {
       result.skipped.push({ flowName, reason: (error as Error).message });
       continue;
@@ -180,7 +184,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       });
       continue;
     }
-    flows.push({ flowName, flow });
+    flows.push({ flowName, flow, references });
   }
 
   const objectFields = emptyObjectFields();
@@ -207,6 +211,14 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     }
   }
 
+  // The other objects the Flows read or write, described only to learn which fields the running
+  // user can see (not for test data, so their validation rules aren't read).
+  const visible: Record<string, string[]> = { ...objectFields.fieldNames };
+  if (options.describe) {
+    const others = flows.flatMap((f) => [...f.references.keys()]).filter((object) => !(object in visible));
+    Object.assign(visible, (await loadObjectFields(others, options.describe)).fieldNames);
+  }
+
   const validationRules: Record<string, ValidationRule[]> = {};
   if (options.validationRules) {
     // Sequential on purpose: one Tooling API query per object, then one per rule.
@@ -224,8 +236,15 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     }
   }
 
-  for (const { flowName, flow } of flows) {
-    const test = generateApexTest(flow, { ...objectFields, validationRules, lookupFilters });
+  for (const { flowName, flow, references } of flows) {
+    const hidden = inaccessibleFields(references, visible);
+    for (const [object, fields] of Object.entries(hidden)) result.inaccessibleFields.push({ flowName, object, fields });
+    const test = generateApexTest(flow, {
+      ...objectFields,
+      validationRules,
+      lookupFilters,
+      inaccessibleFields: hidden,
+    });
     const classPath = join(outputDir, `${test.className}.cls`);
     if (!options.force && (await exists(classPath))) {
       result.skipped.push({ flowName, reason: `${classPath} already exists. Use --force to overwrite.` });

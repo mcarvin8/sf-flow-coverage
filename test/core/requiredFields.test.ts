@@ -109,6 +109,7 @@ describe('loadObjectFields', () => {
       changedValues: { Installation__c: { Crew_Size__c: '2' } },
       lookups: { Installation__c: {} },
       unsetValues: { Installation__c: {} },
+      fieldNames: { Installation__c: ['Crew_Size__c'] },
       relationships: { Installation__c: {} },
       recordTypes: {},
       readOnlyFields: { Installation__c: [] },
