@@ -132,7 +132,7 @@ With a target org (`--target-org` or your default org), the command describes ea
 
 For record-triggered Flows, the command follows the Flow's elements for the record the test creates, deciding each decision the record settles. That includes formula resources, checkbox defaults, picklist defaults on objects without record types, and lookups on data the test doesn't create, which find nothing in an Apex test. It asserts the fields the Flow is certain to set and the records it is certain to create. When the Flow is certain to block the save with a custom error, the test expects that error, and a second test sets the fields that avoid it. What the Flow does only on a decision outcome it can't predict gets commented-out assertions.
 
-Every generated test has TODOs for anything it couldn't fill in, such as entry criteria it couldn't meet and assertions it couldn't work out. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`.
+Every generated test has TODOs for anything it couldn't fill in, such as entry criteria it couldn't meet and assertions it couldn't work out. Expect some generated tests to fail until you fill these in: a failure from the Flow's own validation still shows the Flow ran. Existing classes aren't overwritten unless you pass `--force`. The command says how many TODOs each class has, and `--json` lists them for each class (the test method, the kind, such as `validation rule` or `lookup filter`, and the text), so a script or a coding agent can work through them.
 
 ## Coverage reports
 
@@ -415,7 +415,8 @@ DESCRIPTION
   When the Flow is certain to stop the save with a custom error, the test expects that error, and a second test sets the
   fields that avoid it. For autolaunched Flows, it asserts output variables the Flow is certain to set. What the Flow
   does only on a decision outcome the command can't predict gets commented-out assertions. The generated tests have
-  TODOs for anything the command can't fill in.
+  TODOs for anything the command can't fill in. The output gives each class's TODO count, and --json lists every TODO
+  with its test method and kind.
 
   Only Apex tests count toward deploying Flows as active, so this command generates Apex, not Flow Builder tests.
 

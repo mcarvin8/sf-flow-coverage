@@ -78,7 +78,10 @@ export default class FlowcovScaffold extends SfCommand<ScaffoldResult> {
     });
 
     const verb = flags['dry-run'] ? 'Would create' : 'Created';
-    for (const test of result.created) this.log(`${verb} ${test.className} for ${test.flowName}: ${test.path}`);
+    for (const test of result.created) {
+      const todos = test.todos.length === 0 ? '' : ` (${test.todos.length} TODO${test.todos.length === 1 ? '' : 's'})`;
+      this.log(`${verb} ${test.className} for ${test.flowName}: ${test.path}${todos}`);
+    }
     for (const skip of result.skipped) this.warn(`Skipped ${skip.flowName}: ${skip.reason}`);
     for (const hidden of result.inaccessibleFields) {
       this.warn(

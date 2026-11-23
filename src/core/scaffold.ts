@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
+import { apexTodos } from './apexTodos.js';
 import { type ApprovalSubmit, approvalConflictNote, approvalSubmit, resubmitNote } from './approvals.js';
 import { conditionFromValidationRule, entryCondition, fieldPaths } from './conditions.js';
 import type { ReadEmailAlerts } from './emailAlerts.js';
@@ -394,7 +395,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       await writeFile(classPath, test.body, 'utf8');
       await writeFile(`${classPath}-meta.xml`, apexClassMetaXml(apiVersion), 'utf8');
     }
-    result.created.push({ flowName, className: test.className, path: classPath });
+    result.created.push({ flowName, className: test.className, path: classPath, todos: apexTodos(test.body) });
   }
   return result;
 }
