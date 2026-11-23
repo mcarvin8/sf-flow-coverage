@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
 import { type ApprovalSubmit, approvalConflictNote, approvalSubmit, resubmitNote } from './approvals.js';
 import { entryCondition, fieldPaths } from './conditions.js';
+import type { ReadEmailAlerts } from './emailAlerts.js';
 import { flowFieldReferences, inaccessibleFields } from './fieldReferences.js';
 import { isCountedProcessType } from './flowTypes.js';
 import { parseFlowXml } from './flowXml.js';
@@ -38,6 +39,8 @@ export type ScaffoldOptions = {
   validationRules?: ReadValidationRules;
   /** Reads required lookup filters, so the parent records a test inserts meet them where they can. */
   lookupFilters?: ReadLookupFilters;
+  /** Reads email alert recipients, so the record gets the addresses an alert the Flow sends needs. */
+  emailAlerts?: ReadEmailAlerts;
 };
 
 /** sObjects a generated test creates records of. */
@@ -266,6 +269,9 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
   }
 
   // Other automation matters to Flows that submit, and to the update tests of any Flow.
+  const alertNames = [...new Set(flows.flatMap((f) => f.flow.graph?.emailAlerts ?? []))];
+  const emailAlerts = options.emailAlerts && alertNames.length > 0 ? await options.emailAlerts(alertNames) : {};
+
   const needed = flows.some((f) => f.submit || hasUpdateTest(f.flow));
   const submits = await approvalSubmits(needed ? flowFiles : new Map());
   for (const { flowName, flow, references, submit } of flows) {
@@ -274,6 +280,7 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     const test = generateApexTest(flow, {
       ...objectFields,
       validationRules,
+      emailAlerts,
       lookupFilters,
       inaccessibleFields: hidden,
       approvalConflict: submit
