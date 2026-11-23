@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.9.2...v0.9.3) (2026-11-23)
+
+
+### Bug Fixes
+
+* **readiness:** calculate Flow coverage the way Salesforce does ([#59](https://github.com/mcarvin8/sf-flow-coverage/issues/59)) ([2c90c35](https://github.com/mcarvin8/sf-flow-coverage/commit/2c90c35082366f2ed95f9244ba93e3aa162f6d62))
+
 ## [0.9.2](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.9.1...v0.9.2) (2026-11-23)
 
 
