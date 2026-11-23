@@ -139,6 +139,8 @@ describe('parseFlowGraph', () => {
       nodes: {},
       formulas: {},
       constants: {},
+      deletes: [],
+      emailRecipients: [],
       idFilters: [],
     });
   });

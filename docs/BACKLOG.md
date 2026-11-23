@@ -63,9 +63,13 @@ An update test's insert can already trigger automation that submits the record f
 
 ### 18. Realistic data for autolaunched Flows
 
-- Placeholder inputs can send a Flow into a loop until it hits the CPU limit, for example splitting a string on a placeholder delimiter. Give each text input a distinct placeholder.
-- Delete Flows fail with "No records in Salesforce match your delete criteria" because the test has nothing to delete. Insert records that match the Flow's delete filters first.
-- Send Email actions fail with no recipients. Fill in the email fields and addresses the Flow sends to.
+Done for Flows started from a test (autolaunched and scheduled):
+
+- Each text input gets its own placeholder (`'[inputName]'`), so no input holds another's and a Flow that splits one on another doesn't loop until the CPU limit.
+- Delete Records elements that find records by filters get a matching record inserted first, comparing with the inputs the test passes; filters it can't meet become a TODO. Deletes with a fault path or an Id filter are left alone.
+- Inputs a Send Email action sends to get `flowtest@example.com` (or the running user for `recipientId`), and so does the address field of an input record it sends to.
+
+Still open: record-triggered Flows that delete other records, and Send Email actions that send to a record a Get Records element finds.
 
 ## CI and reporting
 

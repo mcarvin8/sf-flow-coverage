@@ -1,6 +1,7 @@
 import { type Condition, conditionFromRule, type EvaluationEnv, evaluateCondition } from './conditions.js';
 import { asArray, asRecord, type FlowValue, parseFlowValue, text, type XmlRecord } from './flowValues.js';
 import { type Expr, parseFormula } from './formula.js';
+import type { FlowFilter } from './types.js';
 
 /**
  * The parts of a Flow's elements that decide what a test can assert: which `$Record` fields and
@@ -20,7 +21,38 @@ export type FlowGraph = {
    * `Id = {!recordId}`. Tells which object an Id passed in as text belongs to.
    */
   idFilters: Array<{ variable: string; object: string; field: string }>;
+  /** Delete Records elements that find records by filters, which fail when nothing matches. */
+  deletes?: RecordDelete[];
+  /** Resources Send Email actions send to, such as `{!contactEmail}` or `{!inputContact.Email}`. */
+  emailRecipients?: EmailRecipient[];
 };
+
+/** A Delete Records element that deletes the records its filters match. */
+export type RecordDelete = {
+  element: string;
+  object: string;
+  filters: FlowFilter[];
+  filterLogic?: string;
+  /** True when the element has a fault path, so finding nothing doesn't fail the Flow. */
+  mayFail?: boolean;
+};
+
+/** A resource a Send Email action sends to, by the action's parameter. */
+export type EmailRecipient = {
+  /** `emailAddresses`, `emailAddressesArray`, `recipientId`, or a cc or bcc list. */
+  parameter: string;
+  /** The variable, or variable field, the parameter reads. */
+  reference: string;
+};
+
+/** Send Email parameters that name who gets the email. */
+const RECIPIENT_PARAMETERS = new Set([
+  'emailAddresses',
+  'emailAddressesArray',
+  'recipientId',
+  'ccRecipientAddressList',
+  'bccRecipientAddressList',
+]);
 
 /** A write to a field of the triggering record. */
 export type FieldWrite = {
@@ -98,6 +130,7 @@ export const GRAPH_ARRAY_PATHS = [
   'Flow.recordUpdates.filters',
   'Flow.recordLookups.filters',
   'Flow.recordDeletes.filters',
+  'Flow.actionCalls.inputParameters',
   'Flow.recordCreates.inputAssignments',
   'Flow.customErrors.customErrorMessages',
 ];
@@ -259,7 +292,44 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
     const value = parseFlowValue(asRecord(constant.value)).apexValue;
     if (name && value !== undefined) constants[name] = value;
   }
-  return { start: target(asRecord(flow.start)?.connector), nodes, formulas, constants, idFilters };
+  const deletes: RecordDelete[] = [];
+  for (const element of asArray(flow.recordDeletes)) {
+    const name = text(element.name);
+    const object = text(element.object);
+    // A delete of a record variable deletes what the variable holds, not what filters find.
+    if (!name || !object || text(element.inputReference)) continue;
+    const filters = asArray(element.filters).flatMap((filter) => {
+      const field = text(filter.field);
+      const operator = text(filter.operator);
+      return field && operator ? [{ field, operator, ...parseFlowValue(asRecord(filter.value)) }] : [];
+    });
+    const logic = text(element.filterLogic);
+    deletes.push({
+      element: name,
+      object,
+      filters,
+      ...(logic ? { filterLogic: logic } : {}),
+      ...(hasFaultPath(element) ? { mayFail: true } : {}),
+    });
+  }
+  const emailRecipients: EmailRecipient[] = [];
+  for (const action of asArray(flow.actionCalls)) {
+    if (text(action.actionType) !== 'emailSimple') continue;
+    for (const input of asArray(action.inputParameters)) {
+      const parameter = text(input.name);
+      const reference = text(asRecord(input.value)?.elementReference);
+      if (parameter && reference && RECIPIENT_PARAMETERS.has(parameter)) emailRecipients.push({ parameter, reference });
+    }
+  }
+  return {
+    start: target(asRecord(flow.start)?.connector),
+    nodes,
+    formulas,
+    constants,
+    idFilters,
+    deletes,
+    emailRecipients,
+  };
 }
 
 /**
