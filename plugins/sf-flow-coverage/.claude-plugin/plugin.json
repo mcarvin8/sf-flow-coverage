@@ -8,5 +8,12 @@
   "homepage": "https://github.com/mcarvin8/sf-flow-coverage",
   "repository": "https://github.com/mcarvin8/sf-flow-coverage",
   "license": "MIT",
-  "keywords": ["salesforce", "sfdx", "flow", "apex", "test", "coverage"]
+  "keywords": [
+    "salesforce",
+    "sfdx",
+    "flow",
+    "apex",
+    "test",
+    "coverage"
+  ]
 }
