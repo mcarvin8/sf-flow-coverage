@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.9.1...v0.9.2) (2026-11-23)
+
+
+### Bug Fixes
+
+* **skill:** cover deploy conflicts, expected errors, and the header ([#57](https://github.com/mcarvin8/sf-flow-coverage/issues/57)) ([a8c4871](https://github.com/mcarvin8/sf-flow-coverage/commit/a8c4871f762e672cd4cb2e3d8cb3f7572112dc3c))
+
 ## [0.9.1](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.9.0...v0.9.1) (2026-11-23)
 
 

@@ -1,7 +1,7 @@
 {
   "name": "sf-flow-coverage",
   "description": "Get your Salesforce org ready to deploy Flows as active: find uncovered Flows, gate coverage per Flow in pull requests, and scaffold Apex tests.",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "dependencies": {
     "@oclif/core": "5.1.12",
     "@salesforce/core": "9.4.6",
