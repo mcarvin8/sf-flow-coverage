@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.9.0...v0.9.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* keep the repo's maintenance skills out of skills CLI installs ([#55](https://github.com/mcarvin8/sf-flow-coverage/issues/55)) ([4f82620](https://github.com/mcarvin8/sf-flow-coverage/commit/4f82620f2dcb72236b05f2a68f58976e359456d4))
+
 ## [0.9.0](https://github.com/mcarvin8/sf-flow-coverage/compare/v0.8.0...v0.9.0) (2026-11-23)
 
 
