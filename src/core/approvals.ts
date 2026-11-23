@@ -61,6 +61,24 @@ export function approvalSubmit(flowName: string, xml: string): ApprovalSubmit | 
 }
 
 /**
+ * Explains why an update test of a Flow that doesn't submit for approval can fail with
+ * ALREADY_IN_PROCESS: other automation submits the record when the test inserts it and again when
+ * the test updates it. Undefined when no automation submits the object on both saves.
+ */
+export function resubmitNote(flowName: string, object: string, all: ApprovalSubmit[]): string[] | undefined {
+  const others = all
+    .filter((s) => s.flowName !== flowName && s.object === object && s.onCreate && s.onUpdate)
+    .map((s) => s.flowName);
+  if (others.length === 0) return undefined;
+  const verb = others.length === 1 ? 'submits' : 'submit';
+  return [
+    `TODO: ${others.join(', ')} ${verb} a ${object} for approval when it's created and again when it's updated.`,
+    "The update test's insert submits the record, so its update fails with ALREADY_IN_PROCESS.",
+    "Set the record up so that automation's entry criteria are unmet on insert or on update.",
+  ];
+}
+
+/**
  * Explains why a test of a Flow that submits its record for approval can fail with
  * ALREADY_IN_PROCESS: other automation submits the same record when it's created (in the create
  * test's save, or the update test's insert), or the Flow itself does, on create, before the update

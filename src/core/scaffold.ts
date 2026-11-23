@@ -2,7 +2,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { apexClassMetaXml, flowKind, generateApexTest } from './apexTemplate.js';
-import { type ApprovalSubmit, approvalConflictNote, approvalSubmit } from './approvals.js';
+import { type ApprovalSubmit, approvalConflictNote, approvalSubmit, resubmitNote } from './approvals.js';
 import { entryCondition, fieldPaths } from './conditions.js';
 import { flowFieldReferences, inaccessibleFields } from './fieldReferences.js';
 import { isCountedProcessType } from './flowTypes.js';
@@ -159,6 +159,10 @@ async function approvalSubmits(flowFiles: Map<string, string>): Promise<Approval
   return submits;
 }
 
+/** Whether the generated test inserts a record and then updates it: record-triggered Flows that run on update. */
+const hasUpdateTest = (flow: FlowMetadata): boolean =>
+  flowKind(flow) === 'record' && (flow.recordTriggerType === 'Update' || flow.recordTriggerType === 'CreateAndUpdate');
+
 async function exists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -261,7 +265,9 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
     }
   }
 
-  const submits = await approvalSubmits(flows.some((f) => f.submit) ? flowFiles : new Map());
+  // Other automation matters to Flows that submit, and to the update tests of any Flow.
+  const needed = flows.some((f) => f.submit || hasUpdateTest(f.flow));
+  const submits = await approvalSubmits(needed ? flowFiles : new Map());
   for (const { flowName, flow, references, submit } of flows) {
     const hidden = inaccessibleFields(references, visible);
     for (const [object, fields] of Object.entries(hidden)) result.inaccessibleFields.push({ flowName, object, fields });
@@ -270,7 +276,11 @@ export async function scaffoldTests(options: ScaffoldOptions): Promise<ScaffoldR
       validationRules,
       lookupFilters,
       inaccessibleFields: hidden,
-      approvalConflict: submit && approvalConflictNote(submit, submits),
+      approvalConflict: submit
+        ? approvalConflictNote(submit, submits)
+        : hasUpdateTest(flow)
+          ? resubmitNote(flowName, flow.object as string, submits)
+          : undefined,
     });
     const classPath = join(outputDir, `${test.className}.cls`);
     if (!options.force && (await exists(classPath))) {

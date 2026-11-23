@@ -71,6 +71,31 @@ Done for Flows started from a test (autolaunched and scheduled):
 
 Still open: record-triggered Flows that delete other records, and Send Email actions that send to a record a Get Records element finds.
 
+### 19. Approval conflicts in other Flows' tests
+
+The update test of any Flow on an object fails with `ALREADY_IN_PROCESS` when other automation submits that object's records for approval both when they're created and when they're updated: the test's insert submits the record, and its update submits it again. Done: the update test of every record-triggered Flow on such an object gets a TODO naming that automation.
+
+### 20. Email to record fields and email alerts
+
+Record-triggered Flows fail with "0 recipients" when a Send Email action sends to a field of `$Record` that the test leaves empty, or when an email alert's recipients (defined in its `WorkflowAlert` metadata: email fields, users, roles) resolve to no one. Set the record's email fields the action or alert sends to, reading the alert's recipients with the Metadata API.
+
+### 21. Keep placeholder text out of Id fields
+
+Tests fail with "Invalid id" when criteria compare an Id or lookup field with text and the solver sets that text on the field, or when a text input the Flow compares with a lookup field gets placeholder text because the describe couldn't tell what the lookup points to. Don't set text that isn't an Id on Id and lookup fields, and pass `null` with a TODO instead of placeholder text for such inputs. Treat a text input the Flow assigns to a record variable's `Id` as a record Id too, so updates of that variable don't fail with "the ID value in the variable must be populated".
+
+### 22. Query everything a Flow reads from input records
+
+Autolaunched Flows fail with "failed to access the value ... because it hasn't been set" when they read a field of an input record the test didn't query, such as a field through a relationship (`input.Lookup__r.Field__c`). Query every field and relationship field the Flow references on the input record.
+
+### 23. Record types: picklist values and availability
+
+Restricted picklist values can be valid for an object but not for the record type a test uses, which fails with "bad value for restricted picklist field". Pick a record type whose picklist values include the value (from the UI API's picklist values per record type), or leave a TODO. A record type the running user can't use fails with "this ID value isn't valid for the user": report it from the describe's `available` flag, as #16 does for fields.
+
+### 24. Validation rules that need parent records, and scheduled Flows on an object
+
+- A validation rule can require a lookup to be filled (for example "a parent project or milestone"). The objects those lookups point to aren't described, so the test can't insert the parent. Describe lookup targets the rules need.
+- A schedule-triggered Flow with an object fails with "Missing required input parameter: SObjectRowId" when started from Apex. Check whether passing a record's Id as `SObjectRowId` runs it for that record.
+
 ## CI and reporting
 
 ### 8. `sf flowcov transform`

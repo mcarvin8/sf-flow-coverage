@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { approvalConflictNote, approvalSubmit } from '../../src/core/approvals.js';
+import { approvalConflictNote, approvalSubmit, resubmitNote } from '../../src/core/approvals.js';
 import { scaffoldTests } from '../../src/core/scaffold.js';
 
 const submitAction = (record = '$Record.Id') =>
@@ -111,7 +111,64 @@ describe('approvalConflictNote', () => {
   });
 });
 
+describe('resubmitNote', () => {
+  const submit = (flowName: string, onCreate: boolean, onUpdate: boolean, object = 'Job__c') => ({
+    flowName,
+    object,
+    onCreate,
+    onUpdate,
+  });
+
+  it('names automation that submits the record on create and again on update', () => {
+    expect(
+      resubmitNote('Mine', 'Job__c', [
+        submit('Approval', true, true),
+        submit('On_Create', true, false),
+        submit('On_Update', false, true),
+        submit('Elsewhere', true, true, 'Case'),
+      ]),
+    ).toEqual([
+      "TODO: Approval submits a Job__c for approval when it's created and again when it's updated.",
+      "The update test's insert submits the record, so its update fails with ALREADY_IN_PROCESS.",
+      "Set the record up so that automation's entry criteria are unmet on insert or on update.",
+    ]);
+    expect(resubmitNote('Mine', 'Job__c', [submit('A', true, true), submit('B', true, true)])?.[0]).toBe(
+      "TODO: A, B submit a Job__c for approval when it's created and again when it's updated.",
+    );
+  });
+
+  it('says nothing when no automation submits on both saves', () => {
+    expect(
+      resubmitNote('Mine', 'Job__c', [submit('On_Create', true, false), submit('Mine', true, true)]),
+    ).toBeUndefined();
+  });
+});
+
 describe('scaffoldTests and approval submits', () => {
+  it("explains other automation's resubmits in update tests of Flows that don't submit", async () => {
+    const project = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-resubmit-'));
+    try {
+      mkdirSync(join(project, 'flows'));
+      const write = (name: string, xml: string) => writeFileSync(join(project, 'flows', `${name}.flow-meta.xml`), xml);
+      write('Approval', recordFlow('CreateAndUpdate'));
+      write('Updates', recordFlow('Update', ''));
+      write('Creates', recordFlow('Create', ''));
+      await scaffoldTests({
+        flowNames: ['Updates', 'Creates'],
+        projectDir: project,
+        outputDir: join(project, 'out'),
+      });
+      const read = (name: string) => readFileSync(join(project, 'out', `${name}_FlowTest.cls`), 'utf8');
+      expect(read('Updates')).toContain(
+        " * TODO: Approval submits a Job__c for approval when it's created and again when it's updated.",
+      );
+      // A create test has no second save.
+      expect(read('Creates')).not.toContain('ALREADY_IN_PROCESS');
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   it('reads the other Flows in the project only when a Flow it scaffolds submits for approval', async () => {
     const project = mkdtempSync(join(tmpdir(), 'sf-flow-coverage-approval-'));
     try {
