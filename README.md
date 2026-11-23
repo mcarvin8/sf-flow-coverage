@@ -518,7 +518,21 @@ copilot plugin install sf-flow-coverage@sf-flow-coverage
 npx skills add mcarvin8/sf-flow-coverage
 ```
 
-Then ask your agent to "fix the generated Flow tests" or "work through the flowcov TODOs". The agent reads your org's metadata and test results, so use an AI tool your organization allows for that org's data.
+### Using the skill
+
+You need the `sf-flow-coverage` CLI plugin (`sf plugins install sf-flow-coverage`) and an authenticated sandbox or scratch org.
+
+In Claude Code, start the skill by name, with the Flow and the org:
+
+```text
+/flowcov-fix-tests Fix the generated Flow test for Account_After_Save against my-sandbox
+```
+
+Installed as a Claude Code plugin, the command is `/sf-flow-coverage:flowcov-fix-tests`. Other agents pick the skill up from a request such as "fix the generated Flow tests against my-sandbox" or "work through the flowcov TODOs".
+
+Start with one Flow, then ask for all uncovered Flows once that works. The agent ends with a table of each class's result and the org changes the remaining failures need, then runs `sf flowcov readiness`.
+
+The agent reads your org's metadata and test results, so use an AI tool your organization allows for that org's data.
 
 ## Programmatic API
 

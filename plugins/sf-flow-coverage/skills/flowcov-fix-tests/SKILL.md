@@ -16,13 +16,26 @@ Some failures can't be fixed in a test, because they come from how the org is se
 - **Work only in a sandbox or scratch org.** Before deploying anything, check the target org with `sf data query -q "SELECT IsSandbox FROM Organization" -o <org> --json`. If `IsSandbox` is false, stop and tell the user. A scratch org reports true.
 - **Change only the generated test classes** (`*_FlowTest.cls`). Never change the Flow under test, other Apex, validation rules, permissions, or any other metadata, in the project or in the org.
 - **Keep the tests honest.** A test must run the Flow the way the org would and assert what the Flow does:
-  - Don't catch exceptions so that a test passes.
+  - Don't catch exceptions so that a test passes. Catching the error the Flow is meant to raise is fine, when the test asserts that it was raised and what it says:
+
+    ```apex
+    try {
+        update testRecord;
+        Assert.fail('Handover_Items_Not_Closed should block this save');
+    } catch (DmlException e) {
+        Assert.isTrue(e.getMessage().contains('Close all handover items'), e.getMessage());
+    }
+    ```
+
+    Catch only that exception type, and assert the message.
   - Don't remove or weaken an assertion only because it fails. Check the expected value against the Flow's elements first.
   - Don't use `@IsTest(SeeAllData=true)` or hard-coded record Ids.
-- **Don't overwrite edits.** Run `scaffold` with `--force` only for classes the user hasn't edited by hand, or when the user asks.
+- **Don't overwrite edits.** Run `scaffold` with `--force` only for classes the user hasn't edited by hand, or when the user asks. The same goes for a test class already in the org: see "Deploy conflicts" in Step 4.
 - **Keep org data in this session.** Don't paste field values, record data, or error output from the org into issues, pull requests, or anywhere outside the conversation.
 
 ## Step 1: Check prerequisites
+
+Run each `sf` command on its own. Don't chain several in one shell line with `&&` or pipes: on Windows, a chained `sf` command can fail with `'C:\Program' is not recognized` when it's run from Git Bash.
 
 1. Confirm the project has an `sfdx-project.json`, and note its default package directory.
 2. Confirm the plugin is installed: `sf plugins inspect sf-flow-coverage`. If it isn't, ask the user before running `sf plugins install sf-flow-coverage`.
@@ -65,6 +78,7 @@ For each class with TODOs, one class at a time:
 
    Base them on the Flow's elements for the data the test sets. Leave a TODO for an outcome you can't work out.
 4. Remove each TODO comment once it's handled. Leave the TODOs that need a change in the org, and add the reason.
+5. Update the class header. Once no TODOs are left for you, remove its line "Replace the TODOs with real data and assertions on what the Flow does." In its place, briefly say what the tests cover, and anything they can't, such as a fault path no test can trigger.
 
 ## Step 4: Deploy and run the tests
 
@@ -76,6 +90,15 @@ sf apex run test --class-names <Class_FlowTest> --target-org <org> --code-covera
 ```
 
 `--code-coverage` makes Salesforce record the Flow coverage these tests give.
+
+**Deploy conflicts.** If the deploy stops because the class in the org differs from the one you're deploying, don't add `--ignore-conflicts` straight away:
+
+1. Retrieve the org's copy to a scratch folder, without touching the project. For example, run `sf project retrieve start --metadata ApexClass:<Class_FlowTest> --target-org <org> --target-metadata-dir <scratch folder> --unzip`.
+2. Compare it with your version.
+3. Overwrite it with `--ignore-conflicts` only when one of these is true:
+   - The org's copy is an unedited generated version: it still has the generated header and TODOs, and no methods or assertions someone wrote by hand.
+   - The user agrees.
+4. Otherwise stop and show the user the differences.
 
 ## Step 5: Fix failures
 
