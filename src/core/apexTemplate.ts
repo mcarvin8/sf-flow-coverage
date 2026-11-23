@@ -1,5 +1,6 @@
 import {
   conditionFromFilters,
+  conditionFromFormula,
   conditionFromValidationRule,
   entryCondition,
   evaluateCondition,
@@ -7,6 +8,7 @@ import {
   negate,
 } from './conditions.js';
 import { type CriteriaPlan, emptyPlan, type SolveContext, solveCriteria } from './criteria.js';
+import type { AlertRecipients } from './emailAlerts.js';
 import {
   type FieldState,
   type FieldWrite,
@@ -132,6 +134,8 @@ type CriteriaValues = {
   picklists: Record<string, Record<string, PicklistInfo>>;
   /** Active validation rules per object. */
   validationRules: Record<string, ValidationRule[]>;
+  /** Recipients of the email alerts the Flow sends, by alert full name. */
+  emailAlerts: Record<string, AlertRecipients>;
   /** Required lookup filters per object. */
   lookupFilters: Record<string, LookupFilter[]>;
   /** Apex values of the Flow's constants and formula resources that have one, by name. */
@@ -188,6 +192,7 @@ function planCriteria(
     const insert = withValidation({ ...emptyPlan(), set: new Map(plan.prior) }, object, values, required, 'insert');
     plan = { ...plan, prior: insert.set, unmet: [...plan.unmet, ...insert.unmet] };
   }
+  plan = withRecipients(plan, flow, object, values, required, context);
   plan = withValidation(plan, object, values, required, context);
   for (const [parent, fields] of plan.parents) {
     const known = values.parentFields.get(parent) ?? new Map<string, string>();
@@ -195,6 +200,66 @@ function planCriteria(
     values.parentFields.set(parent, known);
   }
   return plan;
+}
+
+/**
+ * Conditions that give an email address to each field of the triggering record a Send Email
+ * action or email alert sends to, as `{!$Record.Field} = "address"` formulas. An alert that also
+ * sends to someone the record doesn't decide (a user, a role, the owner) is left alone.
+ */
+function recipientFormulas(flow: FlowMetadata, object: string, alerts: Record<string, AlertRecipients>): string[] {
+  const formulas = new Set<string>();
+  for (const recipient of flow.graph?.emailRecipients ?? []) {
+    // recipientId is an Id, such as the owner's, which the test already fills.
+    if (recipient.parameter !== 'recipientId' && recipient.reference.startsWith('$Record.')) {
+      formulas.add(`{!${recipient.reference}} = ${TEST_EMAIL_FORMULA}`);
+    }
+  }
+  for (const name of flow.graph?.emailAlerts ?? []) {
+    const alert = alerts[name];
+    if (!name.startsWith(`${object}.`) || !alert || alert.hasFixedRecipient) continue;
+    for (const field of alert.emailFields) formulas.add(`{!$Record.${field}} = ${TEST_EMAIL_FORMULA}`);
+    for (const field of alert.userLookups) formulas.add(`{!$Record.${field}} = {!$User.Id}`);
+  }
+  return [...formulas];
+}
+
+/** `TEST_EMAIL` as a formula string. */
+const TEST_EMAIL_FORMULA = '"flowtest@example.com"';
+
+/**
+ * Gives the record the email addresses the Flow sends to, so a Send Email action or email alert
+ * doesn't fail with "0 recipients". In an update test the insert gets them too, since a Flow that
+ * also runs on create sends then. One it can't fill becomes a TODO.
+ */
+function withRecipients(
+  plan: CriteriaPlan,
+  flow: FlowMetadata,
+  object: string,
+  values: CriteriaValues,
+  required: RequiredFieldMap,
+  context: 'insert' | 'update',
+): CriteriaPlan {
+  const ctx = criteriaContext(object, values, required, context);
+  let current = plan;
+  for (const formula of recipientFormulas(flow, object, values.emailAlerts)) {
+    const met = solveCriteria(conditionFromFormula(formula), ctx, current);
+    if (met.unmet.length === current.unmet.length) {
+      current = met;
+    } else {
+      const field = formula.slice(2, formula.indexOf('}'));
+      current = {
+        ...current,
+        unmet: [...current.unmet, { label: 'email recipient', text: `give ${field} an address` }],
+      };
+    }
+  }
+  if (context === 'update') {
+    const prior = new Map(current.prior);
+    for (const [field, value] of current.set) if (!plan.set.has(field) && !prior.has(field)) prior.set(field, value);
+    current = { ...current, prior };
+  }
+  return current;
 }
 
 const criteriaTodos = (plan: CriteriaPlan): string[] => plan.unmet.map((u) => `// TODO: ${u.label}: ${u.text}`);
@@ -1006,6 +1071,8 @@ export type GenerateOptions = {
   validationRules?: Record<string, ValidationRule[]>;
   /** Required lookup filters per object. Parents the test inserts meet them where the generator can. */
   lookupFilters?: Record<string, LookupFilter[]>;
+  /** Recipients of the email alerts Flows send, by alert full name (`Case.Notify_Owner`). */
+  emailAlerts?: Record<string, AlertRecipients>;
 };
 
 type ResolvedLookups = {
@@ -1192,6 +1259,7 @@ export function generateApexTest(flow: FlowMetadata, options: GenerateOptions = 
     picklists: options.picklists ?? {},
     validationRules: options.validationRules ?? {},
     lookupFilters: options.lookupFilters ?? {},
+    emailAlerts: options.emailAlerts ?? {},
     resources: flowResources(flow),
   };
   const validate = (object: string, overrides: Map<string, string>): Map<string, string> =>

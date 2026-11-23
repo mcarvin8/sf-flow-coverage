@@ -25,6 +25,8 @@ export type FlowGraph = {
   deletes?: RecordDelete[];
   /** Resources Send Email actions send to, such as `{!contactEmail}` or `{!inputContact.Email}`. */
   emailRecipients?: EmailRecipient[];
+  /** Email alerts the Flow sends, by full name (`Case.Notify_Owner`). */
+  emailAlerts?: string[];
 };
 
 /** A Delete Records element that deletes the records its filters match. */
@@ -313,7 +315,10 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
     });
   }
   const emailRecipients: EmailRecipient[] = [];
+  const emailAlerts: string[] = [];
   for (const action of asArray(flow.actionCalls)) {
+    const alert = text(action.actionName);
+    if (text(action.actionType) === 'emailAlert' && alert) emailAlerts.push(alert);
     if (text(action.actionType) !== 'emailSimple') continue;
     for (const input of asArray(action.inputParameters)) {
       const parameter = text(input.name);
@@ -329,6 +334,7 @@ export function parseFlowGraph(flow: XmlRecord): FlowGraph {
     idFilters,
     deletes,
     emailRecipients,
+    emailAlerts: [...new Set(emailAlerts)],
   };
 }
 

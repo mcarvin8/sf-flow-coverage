@@ -77,7 +77,7 @@ The update test of any Flow on an object fails with `ALREADY_IN_PROCESS` when ot
 
 ### 20. Email to record fields and email alerts
 
-Record-triggered Flows fail with "0 recipients" when a Send Email action sends to a field of `$Record` that the test leaves empty, or when an email alert's recipients (defined in its `WorkflowAlert` metadata: email fields, users, roles) resolve to no one. Set the record's email fields the action or alert sends to, reading the alert's recipients with the Metadata API.
+Record-triggered Flows fail with "0 recipients" when a Send Email action sends to a field of `$Record` that the test leaves empty, or when an email alert's recipients (defined in its `WorkflowAlert` metadata: email fields, users, roles) resolve to no one. Done: the test record gets `flowtest@example.com` in each field of `$Record` (or of a parent record) a Send Email action sends to, and in each email field an email alert sends to, with user lookups set to the running user. Alerts are read with the Metadata API (`WorkflowAlert`); an alert that also sends to a user, role, group, the owner, or fixed addresses is left alone. Update tests get the addresses on insert too. A field it can't fill gets a TODO. Not covered: alerts that send to a contact lookup, and Send Email actions that send to a record a Get Records element finds.
 
 ### 21. Keep placeholder text out of Id fields
 

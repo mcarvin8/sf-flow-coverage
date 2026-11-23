@@ -1,5 +1,6 @@
 import { Messages, SfError } from '@salesforce/core';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
+import { emailAlertReader } from '../../core/emailAlerts.js';
 import { lookupFilterReader } from '../../core/lookupFilters.js';
 import { OrgCoverageSource } from '../../core/orgCoverageSource.js';
 import { scaffoldTests } from '../../core/scaffold.js';
@@ -71,6 +72,7 @@ export default class FlowcovScaffold extends SfCommand<ScaffoldResult> {
       describe: connection ? describeObject(connection) : undefined,
       validationRules: connection ? validationRuleReader(toolingQuery(connection)) : undefined,
       lookupFilters: connection ? lookupFilterReader(metadataRead(connection)) : undefined,
+      emailAlerts: connection ? emailAlertReader(metadataRead(connection)) : undefined,
     });
 
     const verb = flags['dry-run'] ? 'Would create' : 'Created';

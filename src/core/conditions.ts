@@ -43,7 +43,8 @@ export type ConditionLabel =
   | 'entry criteria logic'
   | 'decision'
   | 'validation rule'
-  | 'lookup filter';
+  | 'lookup filter'
+  | 'email recipient';
 
 export type Atom = {
   kind: 'atom';
